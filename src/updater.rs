@@ -118,6 +118,9 @@ fn start_auto_update_check_(rx_msg: Receiver<UpdateMsg>) {
 }
 
 fn check_update(manually: bool) -> ResultType<()> {
+    if crate::common::is_update_disabled() {
+        return Ok(());
+    }
     #[cfg(target_os = "windows")]
     let is_msi = crate::platform::is_msi_installed()?;
     if !(manually || config::Config::get_bool_option(config::keys::OPTION_ALLOW_AUTO_UPDATE)) {

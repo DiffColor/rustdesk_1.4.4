@@ -904,7 +904,16 @@ pub fn is_modifier(evt: &KeyEvent) -> bool {
     }
 }
 
+#[inline]
+pub fn is_update_disabled() -> bool {
+    true
+}
+
 pub fn check_software_update() {
+    *SOFTWARE_UPDATE_URL.lock().unwrap() = "".to_string();
+    if is_update_disabled() {
+        return;
+    }
     if is_custom_client() {
         return;
     }
