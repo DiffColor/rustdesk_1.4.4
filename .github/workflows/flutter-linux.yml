@@ -1,0 +1,15 @@
+name: Flutter Linux Only Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  run-flutter-linux-build:
+    uses: ./.github/workflows/flutter-build-linux.yml
+    secrets: inherit
+    with:
+      upload-artifact: true
+      upload-tag: ${{ github.ref_type == 'tag' && github.ref_name || 'custom' }}
