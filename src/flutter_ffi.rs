@@ -977,6 +977,13 @@ pub fn main_set_option(key: String, value: String) {
             config::option2bool(&key, &value),
         );
     }
+    #[cfg(target_os = "android")]
+    if key.eq(config::keys::OPTION_ENABLE_FILE_TRANSFER) {
+        crate::ui_cm_interface::switch_permission_all(
+            "file".to_owned(),
+            config::option2bool(&key, &value),
+        );
+    }
 
     // If `is_allow_tls_fallback` and https proxy is used, we need to restart rendezvous mediator.
     // No need to check if https proxy is used, because this option does not change frequently

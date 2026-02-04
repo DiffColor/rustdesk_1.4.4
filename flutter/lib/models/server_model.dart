@@ -32,6 +32,7 @@ class ServerModel with ChangeNotifier {
   bool _audioOk = false;
   bool _fileOk = false;
   bool _clipboardOk = false;
+  bool _filePermissionForcedOff = false;
   bool _showElevation = false;
   bool hideCm = false;
   int _connectStatus = 0; // Rendezvous Server status
@@ -215,11 +216,19 @@ class ServerModel with ChangeNotifier {
     // file
     if (!await AndroidPermissionManager.check(kManageExternalStorage)) {
       _fileOk = false;
+      final fileOption =
+          await bind.mainGetOption(key: kOptionEnableFileTransfer);
+      if (fileOption != 'N') {
+        _filePermissionForcedOff = true;
+      }
       bind.mainSetOption(key: kOptionEnableFileTransfer, value: "N");
     } else {
       final fileOption =
           await bind.mainGetOption(key: kOptionEnableFileTransfer);
       _fileOk = fileOption != 'N';
+      if (_fileOk) {
+        _filePermissionForcedOff = false;
+      }
     }
 
     // clipboard
@@ -277,8 +286,14 @@ class ServerModel with ChangeNotifier {
       _fileOk = true;
       bind.mainSetOption(
           key: kOptionEnableFileTransfer, value: defaultOptionYes);
+      _filePermissionForcedOff = false;
     } else {
       _fileOk = false;
+      final fileOption =
+          await bind.mainGetOption(key: kOptionEnableFileTransfer);
+      if (fileOption != 'N') {
+        _filePermissionForcedOff = true;
+      }
       bind.mainSetOption(key: kOptionEnableFileTransfer, value: 'N');
     }
 
@@ -348,7 +363,38 @@ class ServerModel with ChangeNotifier {
       if (AndroidPermissionManager.isWaitingFile()) {
         AndroidPermissionManager.complete(kManageExternalStorage, granted);
       }
+      await handleAndroidPermissionResult(kManageExternalStorage, granted);
     }
+  }
+
+  Future<void> handleAndroidPermissionResult(
+      String type, bool result) async {
+    if (!isAndroid) {
+      return;
+    }
+    if (type != kManageExternalStorage) {
+      return;
+    }
+    if (!result) {
+      _fileOk = false;
+      notifyListeners();
+      return;
+    }
+
+    final fileOption =
+        await bind.mainGetOption(key: kOptionEnableFileTransfer);
+    final canAutoEnable = _filePermissionForcedOff &&
+        !isOptionFixed(kOptionEnableFileTransfer) &&
+        clients.isEmpty;
+    if (canAutoEnable) {
+      bind.mainSetOption(
+          key: kOptionEnableFileTransfer, value: defaultOptionYes);
+      _filePermissionForcedOff = false;
+      _fileOk = true;
+    } else {
+      _fileOk = fileOption != 'N';
+    }
+    notifyListeners();
   }
 
   updatePasswordModel() async {
@@ -453,6 +499,7 @@ class ServerModel with ChangeNotifier {
       }
     }
 
+    _filePermissionForcedOff = false;
     _fileOk = !_fileOk;
     bind.mainSetOption(
         key: kOptionEnableFileTransfer,

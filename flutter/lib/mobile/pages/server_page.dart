@@ -871,6 +871,7 @@ void androidChannelInit() {
             var type = arguments["type"] as String;
             var result = arguments["result"] as bool;
             AndroidPermissionManager.complete(type, result);
+            gFFI.serverModel.handleAndroidPermissionResult(type, result);
             break;
           }
         case "on_media_projection_canceled":
