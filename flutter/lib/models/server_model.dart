@@ -207,7 +207,7 @@ class ServerModel with ChangeNotifier {
     if (androidVersion < 30 ||
         !await AndroidPermissionManager.check(kRecordAudio)) {
       _audioOk = false;
-      bind.mainSetOption(key: kOptionEnableAudio, value: "N");
+      await bind.mainSetOption(key: kOptionEnableAudio, value: "N");
     } else {
       final audioOption = await bind.mainGetOption(key: kOptionEnableAudio);
       _audioOk = audioOption != 'N';
@@ -221,7 +221,7 @@ class ServerModel with ChangeNotifier {
       if (fileOption != 'N') {
         _filePermissionForcedOff = true;
       }
-      bind.mainSetOption(key: kOptionEnableFileTransfer, value: "N");
+      await bind.mainSetOption(key: kOptionEnableFileTransfer, value: "N");
     } else {
       final fileOption =
           await bind.mainGetOption(key: kOptionEnableFileTransfer);
@@ -272,10 +272,6 @@ class ServerModel with ChangeNotifier {
       await checkFloatingWindowPermission();
     }
 
-    if (!_isStart) {
-      await startService();
-    }
-
     var filePermissionOk =
         await AndroidPermissionManager.check(kManageExternalStorage);
     if (!filePermissionOk) {
@@ -284,7 +280,7 @@ class ServerModel with ChangeNotifier {
     }
     if (filePermissionOk) {
       _fileOk = true;
-      bind.mainSetOption(
+      await bind.mainSetOption(
           key: kOptionEnableFileTransfer, value: defaultOptionYes);
       _filePermissionForcedOff = false;
     } else {
@@ -294,11 +290,15 @@ class ServerModel with ChangeNotifier {
       if (fileOption != 'N') {
         _filePermissionForcedOff = true;
       }
-      bind.mainSetOption(key: kOptionEnableFileTransfer, value: 'N');
+      await bind.mainSetOption(key: kOptionEnableFileTransfer, value: 'N');
     }
 
     _clipboardOk = true;
-    bind.mainSetOption(key: kOptionEnableClipboard, value: defaultOptionYes);
+    await bind.mainSetOption(key: kOptionEnableClipboard, value: defaultOptionYes);
+
+    if (!_isStart) {
+      await startService();
+    }
 
     notifyListeners();
 
@@ -387,7 +387,7 @@ class ServerModel with ChangeNotifier {
         !isOptionFixed(kOptionEnableFileTransfer) &&
         clients.isEmpty;
     if (canAutoEnable) {
-      bind.mainSetOption(
+      await bind.mainSetOption(
           key: kOptionEnableFileTransfer, value: defaultOptionYes);
       _filePermissionForcedOff = false;
       _fileOk = true;
@@ -501,7 +501,7 @@ class ServerModel with ChangeNotifier {
 
     _filePermissionForcedOff = false;
     _fileOk = !_fileOk;
-    bind.mainSetOption(
+    await bind.mainSetOption(
         key: kOptionEnableFileTransfer,
         value: _fileOk ? defaultOptionYes : 'N');
     notifyListeners();
