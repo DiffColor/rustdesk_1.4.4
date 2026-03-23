@@ -1,0 +1,19 @@
+name: Flutter macOS Tag Build
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - '*.*.*'
+
+jobs:
+  generate-bridge:
+    uses: ./.github/workflows/bridge.yml
+
+  run-flutter-macos-build:
+    needs: [generate-bridge]
+    uses: ./.github/workflows/flutter-build-macos.yml
+    secrets: inherit
+    with:
+      upload-artifact: true
+      upload-tag: ${{ github.ref_name }}
