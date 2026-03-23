@@ -1,6 +1,23 @@
 name: Flutter macOS Tag Build
 
 on:
+  workflow_dispatch:
+    inputs:
+      build-ref:
+        description: "빌드할 브랜치/태그/SHA, 비우면 선택한 ref 사용"
+        required: false
+        default: ""
+        type: string
+      upload-artifact:
+        description: "릴리스/아티팩트를 업로드할지 여부"
+        required: false
+        default: true
+        type: boolean
+      upload-tag:
+        description: "릴리스 업로드 태그, 비우면 빌드 ref 이름 사용"
+        required: false
+        default: ""
+        type: string
   push:
     tags:
       - 'v*.*.*'
@@ -15,5 +32,6 @@ jobs:
     uses: ./.github/workflows/flutter-build-macos.yml
     secrets: inherit
     with:
-      upload-artifact: true
-      upload-tag: ${{ github.ref_name }}
+      ref: ${{ github.event_name == 'workflow_dispatch' && inputs.build-ref || github.ref }}
+      upload-artifact: ${{ github.event_name == 'workflow_dispatch' && inputs.upload-artifact || true }}
+      upload-tag: ${{ github.event_name == 'workflow_dispatch' && (inputs.upload-tag != '' && inputs.upload-tag || (inputs.build-ref != '' && inputs.build-ref || github.ref_name)) || github.ref_name }}

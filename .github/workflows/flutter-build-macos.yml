@@ -3,6 +3,9 @@ name: Build the macOS flutter version of the RustDesk
 on:
   workflow_call:
     inputs:
+      ref:
+        type: string
+        default: ""
       upload-artifact:
         type: boolean
         default: true
@@ -63,6 +66,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
           submodules: recursive
 
       - name: Import the codesign cert
