@@ -313,8 +313,15 @@ jobs:
       - name: Setup vcpkg with Github Actions binary cache
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgDirectory: /opt/artifacts/vcpkg
+          vcpkgDirectory: ${{ github.workspace }}/.vcpkg
           vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+
+      - name: Link vcpkg into /opt/artifacts
+        shell: bash
+        run: |
+          sudo mkdir -p /opt/artifacts
+          sudo rm -rf /opt/artifacts/vcpkg
+          sudo ln -s "$VCPKG_ROOT" /opt/artifacts/vcpkg
 
       - name: Install vcpkg dependencies
         run: |
