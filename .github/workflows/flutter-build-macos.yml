@@ -70,7 +70,7 @@ jobs:
           submodules: recursive
 
       - name: Import the codesign cert
-        if: env.MACOS_P12_BASE64 != null
+        if: env.MACOS_P12_BASE64 != ''
         uses: apple-actions/import-codesign-certs@v1
         with:
           p12-file-base64: ${{ secrets.MACOS_P12_BASE64 }}
@@ -78,13 +78,13 @@ jobs:
           keychain: rustdesk
 
       - name: Check sign and import sign key
-        if: env.MACOS_P12_BASE64 != null
+        if: env.MACOS_P12_BASE64 != ''
         run: |
           security default-keychain -s rustdesk.keychain
           security find-identity -v
 
       - name: Import notarize key
-        if: env.MACOS_P12_BASE64 != null
+        if: env.MACOS_P12_BASE64 != ''
         uses: timheuer/base64-to-file@v1.2
         with:
           fileName: rustdesk.json
@@ -92,7 +92,7 @@ jobs:
           encodedString: ${{ secrets.MACOS_NOTARIZE_JSON }}
 
       - name: Install rcodesign tool
-        if: env.MACOS_P12_BASE64 != null
+        if: env.MACOS_P12_BASE64 != ''
         shell: bash
         run: |
           pushd /tmp
@@ -203,7 +203,7 @@ jobs:
           path: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.zip
 
       - name: Codesign app and create signed zip
-        if: env.MACOS_P12_BASE64 != null && env.UPLOAD_ARTIFACT == 'true'
+        if: env.MACOS_P12_BASE64 != '' && env.UPLOAD_ARTIFACT == 'true'
         run: |
           security default-keychain -s rustdesk.keychain
           security unlock-keychain -p ${{ secrets.MACOS_P12_PASSWORD }} rustdesk.keychain
@@ -213,7 +213,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent ./flutter/build/macos/Build/Products/Release/RustDesk.app rustdesk-${{ env.VERSION }}.zip
 
       - name: Verify signed macOS bundle
-        if: env.MACOS_P12_BASE64 != null && env.UPLOAD_ARTIFACT == 'true'
+        if: env.MACOS_P12_BASE64 != '' && env.UPLOAD_ARTIFACT == 'true'
         run: |
           codesign --verify --deep --strict --verbose=2 ./flutter/build/macos/Build/Products/Release/RustDesk.app
           xcrun stapler validate ./flutter/build/macos/Build/Products/Release/RustDesk.app
