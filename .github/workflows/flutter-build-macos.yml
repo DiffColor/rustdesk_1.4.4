@@ -192,25 +192,25 @@ jobs:
       - name: Create unsigned macOS app zip
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
-          rm -f rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.zip
-          ditto -c -k --sequesterRsrc --keepParent ./flutter/build/macos/Build/Products/Release/RustDesk.app rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.zip
+          rm -f rustdesk-${{ env.VERSION }}-unsigned-${{ matrix.job.arch }}.zip
+          ditto -c -k --sequesterRsrc --keepParent ./flutter/build/macos/Build/Products/Release/RustDesk.app rustdesk-${{ env.VERSION }}-unsigned-${{ matrix.job.arch }}.zip
 
       - name: Upload unsigned macOS app
         if: env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@master
         with:
           name: rustdesk-unsigned-macos-${{ matrix.job.arch }}
-          path: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.zip
+          path: rustdesk-${{ env.VERSION }}-unsigned-${{ matrix.job.arch }}.zip
 
       - name: Codesign app and create signed zip
         if: env.MACOS_P12_BASE64 != '' && env.UPLOAD_ARTIFACT == 'true'
         run: |
           security default-keychain -s rustdesk.keychain
           security unlock-keychain -p ${{ secrets.MACOS_P12_PASSWORD }} rustdesk.keychain
-          rm -f *.zip || true
+          rm -f rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.zip || true
           codesign --force --options runtime -s ${{ secrets.MACOS_CODESIGN_IDENTITY }} --deep --strict ./flutter/build/macos/Build/Products/Release/RustDesk.app -vvv
           rcodesign notary-submit --api-key-path ${{ github.workspace }}/rustdesk.json --staple ./flutter/build/macos/Build/Products/Release/RustDesk.app
-          ditto -c -k --sequesterRsrc --keepParent ./flutter/build/macos/Build/Products/Release/RustDesk.app rustdesk-${{ env.VERSION }}.zip
+          ditto -c -k --sequesterRsrc --keepParent ./flutter/build/macos/Build/Products/Release/RustDesk.app rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.zip
 
       - name: Verify signed macOS bundle
         if: env.MACOS_P12_BASE64 != '' && env.UPLOAD_ARTIFACT == 'true'
@@ -219,18 +219,11 @@ jobs:
           xcrun stapler validate ./flutter/build/macos/Build/Products/Release/RustDesk.app
           spctl --assess --type exec -v ./flutter/build/macos/Build/Products/Release/RustDesk.app
 
-      - name: Rename rustdesk
-        if: env.UPLOAD_ARTIFACT == 'true'
-        run: |
-          for name in rustdesk*??.zip; do
-              mv "$name" "${name%%.zip}-${{ matrix.job.arch }}.zip"
-          done
-
       - name: Publish macOS app zip
-        if: env.UPLOAD_ARTIFACT == 'true'
+        if: env.MACOS_P12_BASE64 != '' && env.UPLOAD_ARTIFACT == 'true'
         uses: softprops/action-gh-release@v1
         with:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            rustdesk*-${{ matrix.job.arch }}.zip
+            rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.zip

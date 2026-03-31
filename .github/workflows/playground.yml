@@ -192,8 +192,8 @@ jobs:
 
       - name: Create unsigned macOS app zip
         run: |
-          rm -f rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.zip
-          ditto -c -k --sequesterRsrc --keepParent ./flutter/build/macos/Build/Products/Release/RustDesk.app rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.zip
+          rm -f rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-flutter${{ matrix.job.flutter }}-flutter${{ matrix.job.date }}.zip
+          ditto -c -k --sequesterRsrc --keepParent ./flutter/build/macos/Build/Products/Release/RustDesk.app rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-flutter${{ matrix.job.flutter }}-flutter${{ matrix.job.date }}.zip
 
       - name: Codesign app and create signed zip
         if: env.MACOS_P12_BASE64 != ''
@@ -202,11 +202,11 @@ jobs:
           security default-keychain -s rustdesk.keychain
           security unlock-keychain -p ${{ secrets.MACOS_P12_PASSWORD }} rustdesk.keychain
           # start sign the rustdesk.app and zip
-          rm -f *.zip || true
+          rm -f rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-flutter${{ matrix.job.flutter }}-flutter${{ matrix.job.date }}.zip || true
           codesign --force --options runtime -s ${{ secrets.MACOS_CODESIGN_IDENTITY }} --deep --strict ./flutter/build/macos/Build/Products/Release/RustDesk.app -vvv
           # notarize the rustdesk.app before zipping it
           rcodesign notary-submit --api-key-path ${{ github.workspace }}/rustdesk.json  --staple ./flutter/build/macos/Build/Products/Release/RustDesk.app
-          ditto -c -k --sequesterRsrc --keepParent ./flutter/build/macos/Build/Products/Release/RustDesk.app rustdesk-${{ env.VERSION }}.zip
+          ditto -c -k --sequesterRsrc --keepParent ./flutter/build/macos/Build/Products/Release/RustDesk.app rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-flutter${{ matrix.job.flutter }}-flutter${{ matrix.job.date }}.zip
 
       - name: Verify signed macOS bundle
         if: env.MACOS_P12_BASE64 != ''
@@ -215,19 +215,13 @@ jobs:
           xcrun stapler validate ./flutter/build/macos/Build/Products/Release/RustDesk.app
           spctl --assess --type exec -v ./flutter/build/macos/Build/Products/Release/RustDesk.app
 
-      - name: Rename rustdesk
-        run: |
-          for name in rustdesk*??.zip; do
-              mv "$name" "${name%%.zip}-${{ matrix.job.arch }}-flutter${{ matrix.job.flutter }}-flutter${{ matrix.job.date }}.zip"
-          done
-
       - name: Publish macOS app zip
         uses: softprops/action-gh-release@v1
         with:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            rustdesk*-${{ matrix.job.arch }}*.zip
+            rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-flutter${{ matrix.job.flutter }}-flutter${{ matrix.job.date }}.zip
 
 
   build-rustdesk-android:
