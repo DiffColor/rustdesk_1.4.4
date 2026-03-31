@@ -140,6 +140,11 @@ def make_parser():
             action='store_true',
             help='Skip packing, only flutter version + Windows supported'
         )
+        parser.add_argument(
+            '--windows-host',
+            action='store_true',
+            help='Build Windows host-only flavor with dedicated storage'
+        )
     parser.add_argument(
         "--package",
         type=str
@@ -281,6 +286,8 @@ def get_features(args):
         features.append('flutter')
     if args.unix_file_copy_paste:
         features.append('unix-file-copy-paste')
+    if windows and getattr(args, 'windows_host', False):
+        features.append('host-turtlelab')
     if osx:
         if args.screencapturekit:
             features.append('screencapturekit')
@@ -431,7 +438,12 @@ def build_flutter_arch_manjaro(version, features):
     system2('HBB=`pwd`/.. FLUTTER=1 makepkg -f')
 
 
-def build_flutter_windows(version, features, skip_portable_pack):
+def build_flutter_windows(version, features, skip_portable_pack, windows_host):
+    output_exe = 'rustdesk.exe'
+    install_name = f'rustdesk-{version}-install.exe'
+    if windows_host:
+        output_exe = 'rustdesk_host_turtlelab.exe'
+        install_name = f'rustdesk-host-turtlelab-{version}-install.exe'
     if not skip_cargo:
         system2(f'cargo build --features {features} --lib --release')
         if not os.path.exists("target/release/librustdesk.dll"):
@@ -442,12 +454,22 @@ def build_flutter_windows(version, features, skip_portable_pack):
     os.chdir('..')
     shutil.copy2('target/release/deps/dylib_virtual_display.dll',
                  flutter_build_dir_2)
+    built_exe = os.path.join(flutter_build_dir_2, 'rustdesk.exe')
+    output_exe_path = os.path.join(flutter_build_dir_2, output_exe)
+    if windows_host:
+        if os.path.exists(output_exe_path):
+            os.remove(output_exe_path)
+        os.replace(built_exe, output_exe_path)
+    else:
+        output_exe_path = built_exe
+    output_exe_cmd_path = output_exe_path.replace('\\', '/')
     if skip_portable_pack:
+        print(f'output location: {os.path.abspath(output_exe_path)}')
         return
     os.chdir('libs/portable')
     system2('pip3 install -r requirements.txt')
     system2(
-        f'python3 ./generate.py -f ../../{flutter_build_dir_2} -o . -e ../../{flutter_build_dir_2}/rustdesk.exe')
+        f'python3 ./generate.py -f ../../{flutter_build_dir_2} -o . -e ../../{output_exe_cmd_path}')
     os.chdir('../..')
     if os.path.exists('./rustdesk_portable.exe'):
         os.replace('./target/release/rustdesk-portable-packer.exe',
@@ -457,9 +479,9 @@ def build_flutter_windows(version, features, skip_portable_pack):
                   './rustdesk_portable.exe')
     print(
         f'output location: {os.path.abspath(os.curdir)}/rustdesk_portable.exe')
-    os.rename('./rustdesk_portable.exe', f'./rustdesk-{version}-install.exe')
+    os.rename('./rustdesk_portable.exe', f'./{install_name}')
     print(
-        f'output location: {os.path.abspath(os.curdir)}/rustdesk-{version}-install.exe')
+        f'output location: {os.path.abspath(os.curdir)}/{install_name}')
 
 
 def main():
@@ -493,7 +515,7 @@ def main():
         os.chdir('../../..')
 
         if flutter:
-            build_flutter_windows(version, features, args.skip_portable_pack)
+            build_flutter_windows(version, features, args.skip_portable_pack, args.windows_host)
             return
         system2('cargo build --release --features ' + features)
         # system2('upx.exe target/release/rustdesk.exe')

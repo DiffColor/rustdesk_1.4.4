@@ -84,6 +84,8 @@ lazy_static::lazy_static! {
     pub static ref DEVICE_ID: Arc<Mutex<String>> = Default::default();
     pub static ref DEVICE_NAME: Arc<Mutex<String>> = Default::default();
     static ref PUBLIC_IPV6_ADDR: Arc<Mutex<(Option<SocketAddr>, Option<Instant>)>> = Default::default();
+    static ref IS_CUSTOM_CLIENT: Arc<std::sync::atomic::AtomicBool> =
+        Arc::new(std::sync::atomic::AtomicBool::new(false));
 }
 
 lazy_static::lazy_static! {
@@ -980,6 +982,18 @@ pub fn get_app_name() -> String {
 }
 
 #[inline]
+pub fn get_display_app_name() -> String {
+    #[cfg(feature = "host-turtlelab")]
+    {
+        return format!("{} Host", get_app_name());
+    }
+    #[cfg(not(feature = "host-turtlelab"))]
+    {
+        get_app_name()
+    }
+}
+
+#[inline]
 pub fn is_rustdesk() -> bool {
     hbb_common::config::APP_NAME.read().unwrap().eq("RustDesk")
 }
@@ -1783,6 +1797,21 @@ pub fn load_custom_client() {
     }
 }
 
+pub fn apply_build_variant() {
+    #[cfg(feature = "storage-turtlelab")]
+    {
+        *config::APP_DATA_NAME.write().unwrap() = "rustdesk_turtlelab".to_owned();
+    }
+    #[cfg(feature = "host-turtlelab")]
+    {
+        *config::APP_DATA_NAME.write().unwrap() = "rustdesk_host_turtlelab".to_owned();
+        config::HARD_SETTINGS
+            .write()
+            .unwrap()
+            .insert("conn-type".to_owned(), "incoming".to_owned());
+    }
+}
+
 fn read_custom_client_advanced_settings(
     settings: serde_json::Value,
     map_display_settings: &HashMap<String, &&str>,
@@ -1879,10 +1908,16 @@ pub fn read_custom_client(config: &str) {
         log::error!("Failed to parse custom client config");
         return;
     };
+    IS_CUSTOM_CLIENT.store(true, std::sync::atomic::Ordering::SeqCst);
 
     if let Some(app_name) = data.remove("app-name") {
         if let Some(app_name) = app_name.as_str() {
             *config::APP_NAME.write().unwrap() = app_name.to_owned();
+        }
+    }
+    if let Some(app_data_name) = data.remove("app-data-name") {
+        if let Some(app_data_name) = app_data_name.as_str() {
+            *config::APP_DATA_NAME.write().unwrap() = app_data_name.to_owned();
         }
     }
 
@@ -1962,7 +1997,7 @@ pub fn get_builtin_option(key: &str) -> String {
 
 #[inline]
 pub fn is_custom_client() -> bool {
-    get_app_name() != "RustDesk"
+    IS_CUSTOM_CLIENT.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 pub fn verify_login(_raw: &str, _id: &str) -> bool {

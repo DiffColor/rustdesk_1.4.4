@@ -50,6 +50,7 @@ fn initialize(app_dir: &str, custom_client_config: &str) {
     } else {
         crate::read_custom_client(custom_client_config);
     }
+    crate::common::apply_build_variant();
     #[cfg(target_os = "android")]
     {
         // flexi_logger can't work when android_logger initialized.
@@ -1040,11 +1041,11 @@ pub fn main_get_socks() -> Vec<String> {
 }
 
 pub fn main_get_app_name() -> String {
-    get_app_name()
+    crate::common::get_display_app_name()
 }
 
 pub fn main_get_app_name_sync() -> SyncReturn<String> {
-    SyncReturn(get_app_name())
+    SyncReturn(crate::common::get_display_app_name())
 }
 
 pub fn main_uri_prefix_sync() -> SyncReturn<String> {

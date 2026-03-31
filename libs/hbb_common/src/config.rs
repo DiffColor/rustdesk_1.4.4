@@ -59,6 +59,7 @@ lazy_static::lazy_static! {
     pub static ref PROD_RENDEZVOUS_SERVER: RwLock<String> = RwLock::new("".to_owned());
     pub static ref EXE_RENDEZVOUS_SERVER: RwLock<String> = Default::default();
     pub static ref APP_NAME: RwLock<String> = RwLock::new("RustDesk".to_owned());
+    pub static ref APP_DATA_NAME: RwLock<String> = RwLock::new(default_app_data_name());
     static ref KEY_PAIR: Mutex<Option<KeyPair>> = Default::default();
     static ref USER_DEFAULT_CONFIG: RwLock<(UserDefaultConfig, Instant)> = RwLock::new((UserDefaultConfig::load(), Instant::now()));
     pub static ref NEW_STORED_PEER_CONFIG: Mutex<HashSet<String>> = Default::default();
@@ -105,6 +106,21 @@ const CHARS: &[char] = &[
     '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k',
     'm', 'n', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
 ];
+
+fn default_app_data_name() -> String {
+    #[cfg(feature = "host-turtlelab")]
+    {
+        return "rustdesk_host_turtlelab".to_owned();
+    }
+    #[cfg(all(not(feature = "host-turtlelab"), feature = "storage-turtlelab"))]
+    {
+        return "rustdesk_turtlelab".to_owned();
+    }
+    #[cfg(not(feature = "storage-turtlelab"))]
+    {
+        return "RustDesk".to_owned();
+    }
+}
 
 pub const RENDEZVOUS_SERVERS: &[&str] = &["turtlesrv.ddns.net"];
 pub const RS_PUB_KEY: &str = "Ez+f9RJAvucGOwwsDyZvwIlD2FeBbFXZwGOG1RKxyxk=";
@@ -618,7 +634,7 @@ impl Config {
     }
 
     fn file_(suffix: &str) -> PathBuf {
-        let name = format!("{}{}", *APP_NAME.read().unwrap(), suffix);
+        let name = format!("{}{}", *APP_DATA_NAME.read().unwrap(), suffix);
         Config::with_extension(Self::path(name))
     }
 
@@ -656,7 +672,7 @@ impl Config {
             let org = ORG.read().unwrap().clone();
             // /var/root for root
             if let Some(project) =
-                directories_next::ProjectDirs::from("", &org, &APP_NAME.read().unwrap())
+                directories_next::ProjectDirs::from("", &org, &APP_DATA_NAME.read().unwrap())
             {
                 let mut path = patch(project.config_dir().to_path_buf());
                 path.push(p);
@@ -671,21 +687,24 @@ impl Config {
         #[cfg(target_os = "macos")]
         {
             if let Some(path) = dirs_next::home_dir().as_mut() {
-                path.push(format!("Library/Logs/{}", *APP_NAME.read().unwrap()));
+                path.push(format!("Library/Logs/{}", *APP_DATA_NAME.read().unwrap()));
                 return path.clone();
             }
         }
         #[cfg(target_os = "linux")]
         {
             let mut path = Self::get_home();
-            path.push(format!(".local/share/logs/{}", *APP_NAME.read().unwrap()));
+            path.push(format!(
+                ".local/share/logs/{}",
+                *APP_DATA_NAME.read().unwrap()
+            ));
             std::fs::create_dir_all(&path).ok();
             return path;
         }
         #[cfg(target_os = "android")]
         {
             let mut path = Self::get_home();
-            path.push(format!("{}/Logs", *APP_NAME.read().unwrap()));
+            path.push(format!("{}/Logs", *APP_DATA_NAME.read().unwrap()));
             std::fs::create_dir_all(&path).ok();
             return path;
         }
@@ -705,7 +724,7 @@ impl Config {
             // https://docs.microsoft.com/en-us/windows/win32/ipc/pipe-names
             format!(
                 "\\\\.\\pipe\\{}\\query{}",
-                *APP_NAME.read().unwrap(),
+                *APP_DATA_NAME.read().unwrap(),
                 postfix
             )
         }
@@ -713,10 +732,14 @@ impl Config {
         {
             use std::os::unix::fs::PermissionsExt;
             #[cfg(target_os = "android")]
-            let mut path: PathBuf =
-                format!("{}/{}", *APP_DIR.read().unwrap(), *APP_NAME.read().unwrap()).into();
+            let mut path: PathBuf = format!(
+                "{}/{}",
+                *APP_DIR.read().unwrap(),
+                *APP_DATA_NAME.read().unwrap()
+            )
+            .into();
             #[cfg(not(target_os = "android"))]
-            let mut path: PathBuf = format!("/tmp/{}", *APP_NAME.read().unwrap()).into();
+            let mut path: PathBuf = format!("/tmp/{}", *APP_DATA_NAME.read().unwrap()).into();
             fs::create_dir(&path).ok();
             fs::set_permissions(&path, fs::Permissions::from_mode(0o0777)).ok();
             path.push(format!("ipc{postfix}"));
@@ -2143,7 +2166,7 @@ pub struct Ab {
 
 impl Ab {
     fn path() -> PathBuf {
-        let filename = format!("{}_ab", APP_NAME.read().unwrap().clone());
+        let filename = format!("{}_ab", APP_DATA_NAME.read().unwrap().clone());
         Config::path(filename)
     }
 
@@ -2267,7 +2290,7 @@ pub struct Group {
 
 impl Group {
     fn path() -> PathBuf {
-        let filename = format!("{}_group", APP_NAME.read().unwrap().clone());
+        let filename = format!("{}_group", APP_DATA_NAME.read().unwrap().clone());
         Config::path(filename)
     }
 
