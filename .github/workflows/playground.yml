@@ -126,7 +126,7 @@ jobs:
 
       - name: Install build runtime
         run: |
-          brew install llvm create-dmg nasm pkg-config
+          brew install llvm nasm pkg-config
 
       - name: Install flutter
         uses: subosito/flutter-action@v2
@@ -190,44 +190,44 @@ jobs:
         run: |
           ./build.py --flutter ${{ matrix.job.extra-build-args }}
 
-      - name: create unsigned dmg
+      - name: Create unsigned macOS app zip
         run: |
-          CREATE_DMG="$(command -v create-dmg)"
-          CREATE_DMG="$(readlink -f "$CREATE_DMG")"
-          sed -i -e 's/MAXIMUM_UNMOUNTING_ATTEMPTS=3/MAXIMUM_UNMOUNTING_ATTEMPTS=7/' "$CREATE_DMG"
-          create-dmg --icon "RustDesk.app" 200 190 --hide-extension "RustDesk.app" --window-size 800 400 --app-drop-link 600 185 rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg ./flutter/build/macos/Build/Products/Release/RustDesk.app
+          rm -f rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.zip
+          ditto -c -k --sequesterRsrc --keepParent ./flutter/build/macos/Build/Products/Release/RustDesk.app rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.zip
 
-      - name: Codesign app and create signed dmg
+      - name: Codesign app and create signed zip
         if: env.MACOS_P12_BASE64 != null
         run: |
-          # Patch create-dmg to give more attempts to unmount image
-          CREATE_DMG="$(command -v create-dmg)"
-          CREATE_DMG="$(readlink -f "$CREATE_DMG")"
-          sed -i -e 's/MAXIMUM_UNMOUNTING_ATTEMPTS=3/MAXIMUM_UNMOUNTING_ATTEMPTS=7/' "$CREATE_DMG"
           # Unlock keychain
           security default-keychain -s rustdesk.keychain
           security unlock-keychain -p ${{ secrets.MACOS_P12_PASSWORD }} rustdesk.keychain
-          # start sign the rustdesk.app and dmg
-          rm -rf *.dmg || true
+          # start sign the rustdesk.app and zip
+          rm -f *.zip || true
           codesign --force --options runtime -s ${{ secrets.MACOS_CODESIGN_IDENTITY }} --deep --strict ./flutter/build/macos/Build/Products/Release/RustDesk.app -vvv
-          create-dmg --icon "RustDesk.app" 200 190 --hide-extension "RustDesk.app" --window-size 800 400 --app-drop-link 600 185 rustdesk-${{ env.VERSION }}.dmg ./flutter/build/macos/Build/Products/Release/RustDesk.app
-          codesign --force --options runtime -s ${{ secrets.MACOS_CODESIGN_IDENTITY }} --deep --strict rustdesk-${{ env.VERSION }}.dmg -vvv
-          # notarize the rustdesk-${{ env.VERSION }}.dmg
-          rcodesign notary-submit --api-key-path ${{ github.workspace }}/rustdesk.json  --staple rustdesk-${{ env.VERSION }}.dmg
+          # notarize the rustdesk.app before zipping it
+          rcodesign notary-submit --api-key-path ${{ github.workspace }}/rustdesk.json  --staple ./flutter/build/macos/Build/Products/Release/RustDesk.app
+          ditto -c -k --sequesterRsrc --keepParent ./flutter/build/macos/Build/Products/Release/RustDesk.app rustdesk-${{ env.VERSION }}.zip
+
+      - name: Verify signed macOS bundle
+        if: env.MACOS_P12_BASE64 != null
+        run: |
+          codesign --verify --deep --strict --verbose=2 ./flutter/build/macos/Build/Products/Release/RustDesk.app
+          xcrun stapler validate ./flutter/build/macos/Build/Products/Release/RustDesk.app
+          spctl --assess --type exec -v ./flutter/build/macos/Build/Products/Release/RustDesk.app
 
       - name: Rename rustdesk
         run: |
-          for name in rustdesk*??.dmg; do
-              mv "$name" "${name%%.dmg}-${{ matrix.job.arch }}-flutter${{ matrix.job.flutter }}-flutter${{ matrix.job.date }}.dmg"
+          for name in rustdesk*??.zip; do
+              mv "$name" "${name%%.zip}-${{ matrix.job.arch }}-flutter${{ matrix.job.flutter }}-flutter${{ matrix.job.date }}.zip"
           done
 
-      - name: Publish DMG package
+      - name: Publish macOS app zip
         uses: softprops/action-gh-release@v1
         with:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            rustdesk*-${{ matrix.job.arch }}*.dmg
+            rustdesk*-${{ matrix.job.arch }}*.zip
 
 
   build-rustdesk-android:
