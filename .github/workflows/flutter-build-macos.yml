@@ -178,7 +178,34 @@ jobs:
           cargo -V
           rustc -V
 
+      - name: Stabilize git transport for cargo dependencies
+        shell: bash
+        run: |
+          git config --global http.version HTTP/1.1
+          git config --global http.lowSpeedLimit 0
+          git config --global http.lowSpeedTime 999999
+
+      - name: Pre-fetch cargo dependencies
+        shell: bash
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+        run: |
+          for attempt in 1 2 3; do
+            if cargo fetch --locked --target ${{ matrix.job.target }}; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "cargo fetch failed after ${attempt} attempts"
+              exit 1
+            fi
+            echo "cargo fetch failed on attempt ${attempt}, retrying..."
+            rm -rf ~/.cargo/git/checkouts/hwcodec-* ~/.cargo/git/db/hwcodec-* || true
+            sleep $((attempt * 15))
+          done
+
       - name: Build rustdesk
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: |
           if [ "${{ matrix.job.target }}" = "aarch64-apple-darwin" ]; then
             MIN_MACOS_VERSION="12.3"
