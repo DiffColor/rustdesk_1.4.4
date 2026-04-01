@@ -104,6 +104,11 @@ jobs:
       - name: Install build runtime
         run: |
           brew install llvm nasm
+          echo "$(brew --prefix nasm)/bin" >> $GITHUB_PATH
+          export PATH="$(brew --prefix nasm)/bin:$PATH"
+          which nasm
+          nasm -v
+          nasm -hO | grep -- "-Ox" || true
           if command -v pkg-config &>/dev/null; then
               echo "pkg-config is already installed"
           else

@@ -27,6 +27,7 @@ else()
             aom-uninitialized-pointer.diff
             # aom-avx2.diff
             # Can be dropped when https://bugs.chromium.org/p/aomedia/issues/detail?id=3029 is merged into the upstream
+            aom-nasm-help-check.diff
             aom-install.diff
     )
 endif()
