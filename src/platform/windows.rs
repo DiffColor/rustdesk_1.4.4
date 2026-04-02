@@ -1272,7 +1272,24 @@ pub fn copy_raw_cmd(src_raw: &str, _raw: &str, _path: &str) -> ResultType<String
             .to_string(),
         _path
     );
-    return Ok(main_raw);
+    let src_name = PathBuf::from(src_raw)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or(anyhow!("Can't get file name of {src_raw}"))?;
+    let target_name = PathBuf::from(_raw)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or(anyhow!("Can't get file name of {_raw}"))?;
+    if src_name.eq_ignore_ascii_case(target_name) {
+        return Ok(main_raw);
+    }
+    Ok(format!(
+        "
+        {main_raw}
+        copy /Y \"{src_raw}\" \"{raw}\"
+        ",
+        raw = _raw,
+    ))
 }
 
 pub fn copy_exe_cmd(src_exe: &str, exe: &str, path: &str) -> ResultType<String> {

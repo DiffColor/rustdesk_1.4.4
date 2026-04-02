@@ -30,20 +30,17 @@ pub fn update_controlling_session_count(count: usize) {
 
 #[allow(dead_code)]
 pub fn start_auto_update() {
-    let _sender = TX_MSG.lock().unwrap();
+    // Software update is disabled for all builds.
 }
 
 #[allow(dead_code)]
 pub fn manually_check_update() -> ResultType<()> {
-    let sender = TX_MSG.lock().unwrap();
-    sender.send(UpdateMsg::CheckUpdate)?;
     Ok(())
 }
 
 #[allow(dead_code)]
 pub fn stop_auto_update() {
-    let sender = TX_MSG.lock().unwrap();
-    sender.send(UpdateMsg::Exit).unwrap_or_default();
+    // Software update is disabled for all builds.
 }
 
 #[inline]

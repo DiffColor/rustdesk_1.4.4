@@ -212,6 +212,7 @@ jobs:
           # Windows: build RustDesk host-only flavor
           python3 .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack --windows-host
           mv ./flutter/build/windows/x64/runner/Release ./rustdesk-host
+          Copy-Item -Force .\rustdesk-host\rustdesk_host_turtlelab.exe .\rustdesk-host\RustDesk.exe
 
           # Download usbmmidd_v2.zip and extract it to ./rustdesk-host
           Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2_host.zip
@@ -350,6 +351,9 @@ jobs:
           nuget restore msi.sln
           msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
           mv ./Package/bin/x64/Release/en-us/Package.msi ../../SignOutput/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
+          python preprocess.py --arp -d ../../rustdesk-host
+          msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
+          mv ./Package/bin/x64/Release/en-us/Package.msi ../../SignOutput/rustdesk-host-turtlelab-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
           sha256sum ../../SignOutput/rustdesk-*.msi
 
       - name: Sign rustdesk self-extracted file
