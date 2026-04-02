@@ -17,5 +17,6 @@ jobs:
     uses: ./.github/workflows/flutter-build.yml
     secrets: inherit
     with:
+      ref: ${{ github.ref }}
       upload-artifact: true
       upload-tag: ${{ github.ref_name }}

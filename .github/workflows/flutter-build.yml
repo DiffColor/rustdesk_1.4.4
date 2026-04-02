@@ -3,6 +3,9 @@ name: Build the flutter version of the RustDesk
 on:
   workflow_call:
     inputs:
+      ref:
+        type: string
+        default: ""
       upload-artifact:
         type: boolean
         default: true
@@ -93,6 +96,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
           submodules: recursive
 
       - name: Restore bridge files
@@ -434,6 +438,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
           submodules: recursive
 
       - name: Install LLVM and Clang
@@ -584,6 +589,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
           submodules: recursive
 
       - name: Install flutter
@@ -680,6 +686,7 @@ jobs:
     uses: ./.github/workflows/flutter-build-macos.yml
     secrets: inherit
     with:
+      ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
       upload-artifact: ${{ inputs.upload-artifact }}
       upload-tag: ${{ inputs.upload-tag }}
 
@@ -812,6 +819,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
           submodules: recursive
 
       - name: Install flutter
@@ -1084,6 +1092,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
           submodules: recursive
 
       - name: Install flutter
@@ -1249,6 +1258,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
           submodules: recursive
 
       - name: Set Swap Space
@@ -1587,6 +1597,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
           submodules: recursive
 
       - name: Modify vcpkg.json for armv7
@@ -1789,6 +1800,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
           submodules: recursive
 
       - name: Download Binary
@@ -1862,6 +1874,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
           submodules: recursive
 
       - name: Download Binary
@@ -1923,6 +1936,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
           submodules: recursive
 
       - name: Prepare env

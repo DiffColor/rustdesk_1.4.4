@@ -72,6 +72,14 @@ jobs:
           ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
           submodules: recursive
 
+      - name: Verify checked out source
+        shell: bash
+        run: |
+          git rev-parse HEAD
+          git describe --tags --always --dirty || true
+          grep -n "let mut event_loop = EventLoopBuilder::new().build();" src/tray.rs
+          grep -n "@available(macOS 10.15, \\*)" src/platform/macos.mm
+
       - name: Import the codesign cert
         if: env.MACOS_P12_BASE64 != ''
         uses: apple-actions/import-codesign-certs@v1
