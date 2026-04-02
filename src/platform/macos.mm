@@ -4,12 +4,19 @@
 #include <Security/Authorization.h>
 #include <Security/AuthorizationTags.h>
 
+static bool IsAtLeastMacOSVersion(NSInteger major, NSInteger minor, NSInteger patch) {
+    NSOperatingSystemVersion minimumVersion;
+    minimumVersion.majorVersion = major;
+    minimumVersion.minorVersion = minor;
+    minimumVersion.patchVersion = patch;
+    return [[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:minimumVersion];
+}
+
 extern "C" bool CanUseNewApiForScreenCaptureCheck() {
     #ifdef NO_InputMonitoringAuthStatus
     return false;
     #else
-    NSOperatingSystemVersion version = [[NSProcessInfo processInfo] operatingSystemVersion];
-    return version.majorVersion >= 11;
+    return IsAtLeastMacOSVersion(11, 0, 0);
     #endif
 }
 
@@ -22,14 +29,18 @@ extern "C" bool IsCanScreenRecording(bool prompt) {
     #ifdef NO_InputMonitoringAuthStatus
     return false;
     #else
-    if (@available(macOS 10.15, *)) {
-        bool res = CGPreflightScreenCaptureAccess();
-        if (!res && prompt) {
-            CGRequestScreenCaptureAccess();
-        }
-        return res;
+    if (!IsAtLeastMacOSVersion(10, 15, 0)) {
+        return true;
     }
-    return true;
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
+    bool res = CGPreflightScreenCaptureAccess();
+    if (!res && prompt) {
+        CGRequestScreenCaptureAccess();
+    }
+#pragma clang diagnostic pop
+    return res;
     #endif
 }
 
@@ -40,33 +51,35 @@ extern "C" bool InputMonitoringAuthStatus(bool prompt) {
     #ifdef NO_InputMonitoringAuthStatus
     return true;
     #else
-    if (@available(macOS 10.15, *)) {
-        IOHIDAccessType theType = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent);
-        NSLog(@"IOHIDCheckAccess = %d, kIOHIDAccessTypeGranted = %d", theType, kIOHIDAccessTypeGranted);
-        switch (theType) {
-            case kIOHIDAccessTypeGranted:
-                return true;
-                break;
-            case kIOHIDAccessTypeDenied: {
-                if (prompt) {
-                    NSString *urlString = @"x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent";
-                    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:urlString]];
-                }
-                break;
-            }
-            case kIOHIDAccessTypeUnknown: {
-                if (prompt) {
-                    bool result = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent);
-                    NSLog(@"IOHIDRequestAccess result = %d", result);
-                }
-                break;
-            }
-            default:
-                break;
-        }
-    } else {
+    if (!IsAtLeastMacOSVersion(10, 15, 0)) {
         return true;
     }
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
+    IOHIDAccessType theType = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent);
+    NSLog(@"IOHIDCheckAccess = %d, kIOHIDAccessTypeGranted = %d", theType, kIOHIDAccessTypeGranted);
+    switch (theType) {
+        case kIOHIDAccessTypeGranted:
+            return true;
+        case kIOHIDAccessTypeDenied: {
+            if (prompt) {
+                NSString *urlString = @"x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent";
+                [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:urlString]];
+            }
+            break;
+        }
+        case kIOHIDAccessTypeUnknown: {
+            if (prompt) {
+                bool result = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent);
+                NSLog(@"IOHIDRequestAccess result = %d", result);
+            }
+            break;
+        }
+        default:
+            break;
+    }
+#pragma clang diagnostic pop
     return false;
     #endif
 }
