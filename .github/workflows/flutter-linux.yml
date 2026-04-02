@@ -6,6 +6,9 @@ on:
     tags:
       - '*'
 
+permissions:
+  contents: write
+
 jobs:
   run-flutter-linux-build:
     uses: ./.github/workflows/flutter-build-linux.yml

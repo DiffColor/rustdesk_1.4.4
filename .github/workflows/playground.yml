@@ -6,6 +6,9 @@ on:
   #  - cron: "0/6 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 env:
   RUST_VERSION: "1.75" # https://github.com/rustdesk/rustdesk/discussions/7503
   CARGO_NDK_VERSION: "3.1.2"
@@ -221,7 +224,7 @@ jobs:
           spctl --assess --type exec -v ./flutter/build/macos/Build/Products/Release/RustDesk.app
 
       - name: Publish macOS app zip
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
@@ -416,7 +419,7 @@ jobs:
           BUILD_TOOLS_VERSION: "30.0.2"
 
       - name: Publish signed apk package
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}

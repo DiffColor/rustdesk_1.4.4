@@ -19,6 +19,9 @@ on:
         default: "manual"
         type: string
 
+permissions:
+  contents: write
+
 jobs:
   generate-bridge:
     uses: ./.github/workflows/bridge.yml

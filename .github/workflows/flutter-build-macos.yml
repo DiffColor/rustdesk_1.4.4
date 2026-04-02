@@ -22,6 +22,9 @@ on:
       MACOS_CODESIGN_IDENTITY:
         required: false
 
+permissions:
+  contents: write
+
 env:
   MAC_RUST_VERSION: "1.81" # 1.81 is requred for macos, because of https://github.com/yury/cidre requires 1.81
   FLUTTER_VERSION: "3.24.5"
@@ -253,9 +256,18 @@ jobs:
 
       - name: Publish macOS app zip
         if: env.MACOS_P12_BASE64 != '' && env.UPLOAD_ARTIFACT == 'true'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
             rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.zip
+
+      - name: Publish unsigned macOS app zip
+        if: env.MACOS_P12_BASE64 == '' && env.UPLOAD_ARTIFACT == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          tag_name: ${{ env.TAG_NAME }}
+          files: |
+            rustdesk-${{ env.VERSION }}-unsigned-${{ matrix.job.arch }}.zip

@@ -10,6 +10,9 @@ on:
         type: string
         default: "nightly"
 
+permissions:
+  contents: write
+
 # NOTE: F-Droid builder script 'flutter/build_fdroid.sh' reads environment
 # variables from this workflow!
 #
@@ -327,7 +330,17 @@ jobs:
           mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/rustdesk-host-turtlelab-${{ env.VERSION }}-${{ matrix.job.arch }}.exe
 
       - name: Add MSBuild to PATH
-        uses: microsoft/setup-msbuild@v2
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            throw "vswhere not found: $vswhere"
+          }
+          $msbuild = & $vswhere -latest -requires Microsoft.Component.MSBuild -find "MSBuild\\**\\Bin\\MSBuild.exe" | Select-Object -First 1
+          if (-not $msbuild) {
+            throw "MSBuild.exe not found"
+          }
+          Split-Path $msbuild | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Build msi
         if: env.UPLOAD_ARTIFACT == 'true'
@@ -346,7 +359,7 @@ jobs:
           BASE_URL=${{ secrets.SIGN_BASE_URL }} SECRET_KEY=${{ secrets.SIGN_SECRET_KEY }} python3 res/job.py sign_files ./SignOutput
 
       - name: Publish Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
           prerelease: true

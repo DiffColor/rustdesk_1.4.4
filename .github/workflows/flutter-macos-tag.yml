@@ -23,6 +23,9 @@ on:
       - 'v*.*.*'
       - '*.*.*'
 
+permissions:
+  contents: write
+
 jobs:
   generate-bridge:
     uses: ./.github/workflows/bridge.yml
