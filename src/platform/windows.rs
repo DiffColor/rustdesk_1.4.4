@@ -1272,11 +1272,13 @@ pub fn copy_raw_cmd(src_raw: &str, _raw: &str, _path: &str) -> ResultType<String
             .to_string(),
         _path
     );
-    let src_name = PathBuf::from(src_raw)
+    let src_path = PathBuf::from(src_raw);
+    let src_name = src_path
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or(anyhow!("Can't get file name of {src_raw}"))?;
-    let target_name = PathBuf::from(_raw)
+    let target_path = PathBuf::from(_raw);
+    let target_name = target_path
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or(anyhow!("Can't get file name of {_raw}"))?;
@@ -3120,7 +3122,6 @@ pub fn try_kill_rustdesk_main_window_process() -> ResultType<()> {
     // Kill rustdesk.exe without extra arg, should only be called by --server
     // We can find the exact process which occupies the ipc, see more from https://github.com/winsiderss/systeminformer
     log::info!("try kill rustdesk main window process");
-    use hbb_common::sysinfo::System;
     let mut sys = System::new();
     sys.refresh_processes();
     let my_uid = sys
