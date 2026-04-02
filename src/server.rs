@@ -658,7 +658,6 @@ async fn sync_and_watch_config_dir() {
     }
 
     let mut cfg0 = (Config::get(), Config2::get());
-    let mut synced = false;
     let tries = if crate::is_server() { 30 } else { 3 };
     log::debug!("#tries of ipc service connection: {}", tries);
     use hbb_common::sleep;
@@ -666,31 +665,28 @@ async fn sync_and_watch_config_dir() {
         sleep(i as f32 * CONFIG_SYNC_INTERVAL_SECS).await;
         match crate::ipc::connect(1000, "_service").await {
             Ok(mut conn) => {
-                if !synced {
-                    if conn.send(&Data::SyncConfig(None)).await.is_ok() {
-                        if let Ok(Some(data)) = conn.next_timeout(1000).await {
-                            match data {
-                                Data::SyncConfig(Some(configs)) => {
-                                    let (config, config2) = *configs;
-                                    let _chk = crate::ipc::CheckIfRestart::new();
-                                    if !config.is_empty() {
-                                        if cfg0.0 != config {
-                                            cfg0.0 = config.clone();
-                                            Config::set(config);
-                                            log::info!("sync config from root");
-                                        }
-                                        if cfg0.1 != config2 {
-                                            cfg0.1 = config2.clone();
-                                            Config2::set(config2);
-                                            log::info!("sync config2 from root");
-                                        }
+                if conn.send(&Data::SyncConfig(None)).await.is_ok() {
+                    if let Ok(Some(data)) = conn.next_timeout(1000).await {
+                        match data {
+                            Data::SyncConfig(Some(configs)) => {
+                                let (config, config2) = *configs;
+                                let _chk = crate::ipc::CheckIfRestart::new();
+                                if !config.is_empty() {
+                                    if cfg0.0 != config {
+                                        cfg0.0 = config.clone();
+                                        Config::set(config);
+                                        log::info!("sync config from root");
                                     }
-                                    synced = true;
+                                    if cfg0.1 != config2 {
+                                        cfg0.1 = config2.clone();
+                                        Config2::set(config2);
+                                        log::info!("sync config2 from root");
+                                    }
                                 }
-                                _ => {}
-                            };
+                            }
+                            _ => {}
                         };
-                    }
+                    };
                 }
 
                 loop {

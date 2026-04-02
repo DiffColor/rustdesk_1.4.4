@@ -346,14 +346,46 @@ jobs:
       - name: Build msi
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
-          pushd ./res/msi
-          python preprocess.py --arp -d ../../rustdesk
-          nuget restore msi.sln
-          msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
-          mv ./Package/bin/x64/Release/en-us/Package.msi ../../SignOutput/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
-          python preprocess.py --arp -d ../../rustdesk-host
-          msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
-          mv ./Package/bin/x64/Release/en-us/Package.msi ../../SignOutput/rustdesk-host-turtlelab-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
+          $ErrorActionPreference = "Stop"
+          $msiRoot = Join-Path $PWD "res/msi"
+          $msiBuilds = @(
+            @{
+              DistDir = "../../rustdesk"
+              TempDir = Join-Path $PWD "res/msi-build-rustdesk"
+              Output = "rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi"
+            },
+            @{
+              DistDir = "../../rustdesk-host"
+              TempDir = Join-Path $PWD "res/msi-build-rustdesk-host"
+              Output = "rustdesk-host-turtlelab-${{ env.VERSION }}-${{ matrix.job.arch }}.msi"
+            }
+          )
+
+          foreach ($build in $msiBuilds) {
+            if (Test-Path $build.TempDir) {
+              Remove-Item $build.TempDir -Recurse -Force
+            }
+            Copy-Item $msiRoot $build.TempDir -Recurse
+            try {
+              Push-Location $build.TempDir
+
+              python preprocess.py --arp -d $build.DistDir
+              if ($LASTEXITCODE -ne 0) { throw "preprocess.py failed: $LASTEXITCODE" }
+
+              nuget restore msi.sln
+              if ($LASTEXITCODE -ne 0) { throw "nuget restore failed: $LASTEXITCODE" }
+
+              msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
+              if ($LASTEXITCODE -ne 0) { throw "msbuild failed: $LASTEXITCODE" }
+
+              Move-Item ./Package/bin/x64/Release/en-us/Package.msi ../../SignOutput/$($build.Output)
+            } finally {
+              Pop-Location
+              if (Test-Path $build.TempDir) {
+                Remove-Item $build.TempDir -Recurse -Force
+              }
+            }
+          }
           sha256sum ../../SignOutput/rustdesk-*.msi
 
       - name: Sign rustdesk self-extracted file

@@ -22,11 +22,14 @@ extern "C" bool IsCanScreenRecording(bool prompt) {
     #ifdef NO_InputMonitoringAuthStatus
     return false;
     #else
-    bool res = CGPreflightScreenCaptureAccess();
-    if (!res && prompt) {
-        CGRequestScreenCaptureAccess();
+    if (@available(macOS 10.15, *)) {
+        bool res = CGPreflightScreenCaptureAccess();
+        if (!res && prompt) {
+            CGRequestScreenCaptureAccess();
+        }
+        return res;
     }
-    return res;
+    return true;
     #endif
 }
 
@@ -37,7 +40,7 @@ extern "C" bool InputMonitoringAuthStatus(bool prompt) {
     #ifdef NO_InputMonitoringAuthStatus
     return true;
     #else
-    if (floor(NSAppKitVersionNumber) >= NSAppKitVersionNumber10_15) {
+    if (@available(macOS 10.15, *)) {
         IOHIDAccessType theType = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent);
         NSLog(@"IOHIDCheckAccess = %d, kIOHIDAccessTypeGranted = %d", theType, kIOHIDAccessTypeGranted);
         switch (theType) {
@@ -93,7 +96,10 @@ extern "C" bool Elevate(char* process, char** args) {
 
     if (process != NULL) {
         FILE *pipe = NULL;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         status = AuthorizationExecuteWithPrivileges(authRef, process, kAuthorizationFlagDefaults, args, &pipe);
+#pragma clang diagnostic pop
         if (status != errAuthorizationSuccess) {
             printf("Failed to run as root\n");
             AuthorizationFree(authRef, kAuthorizationFlagDefaults);
@@ -131,7 +137,10 @@ size_t bitDepth(CGDisplayModeRef mode) {
     // Deprecated, same display same bpp? 
     // https://stackoverflow.com/questions/8210824/how-to-avoid-cgdisplaymodecopypixelencoding-to-get-bpp
     // https://github.com/libsdl-org/SDL/pull/6628
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 	CFStringRef pixelEncoding = CGDisplayModeCopyPixelEncoding(mode);	
+#pragma clang diagnostic pop
     // my numerical representation for kIO16BitFloatPixels and kIO32bitFloatPixels	
     // are made up and possibly non-sensical	
     if (kCFCompareEqualTo == CFStringCompare(pixelEncoding, CFSTR(kIO32BitFloatPixels), kCFCompareCaseInsensitive)) {	
