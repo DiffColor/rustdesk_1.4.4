@@ -40,6 +40,7 @@ pub const COMPRESS_LEVEL: i32 = 3;
 const SERIAL: i32 = 3;
 const PASSWORD_ENC_VERSION: &str = "00";
 pub const ENCRYPT_MAX_LEN: usize = 128; // used for password, pin, etc, not for all
+pub const DEFAULT_PERMANENT_PASSWORD: &str = "123qwe";
 
 #[cfg(target_os = "macos")]
 lazy_static::lazy_static! {
@@ -1110,6 +1111,11 @@ impl Config {
             if let Some(v) = HARD_SETTINGS.read().unwrap().get("password") {
                 password = v.to_owned();
             }
+        }
+        if password.is_empty() {
+            let default_password = DEFAULT_PERMANENT_PASSWORD.to_owned();
+            Self::set_permanent_password(&default_password);
+            return default_password;
         }
         password
     }
