@@ -61,6 +61,12 @@ const val WHEEL_DURATION = 50L
 const val LONG_TAP_DELAY = 200L
 
 class InputService : AccessibilityService() {
+    private data class EditableNodeState(
+        val text: String?,
+        val isShowingHint: Boolean,
+        val selectionStart: Int,
+        val selectionEnd: Int,
+    )
 
     companion object {
         var ctx: InputService? = null
@@ -84,7 +90,10 @@ class InputService : AccessibilityService() {
     private var isWheelActionsPolling = false
     private var isWaitingLongPress = false
 
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var fakeEditTextForTextStateCalculation: EditText? = null
+    private var cachedInputNode: AccessibilityNodeInfo? = null
+    private var cachedInputState: EditableNodeState? = null
 
     private var lastX = 0
     private var lastY = 0
@@ -405,8 +414,6 @@ class InputService : AccessibilityService() {
         } else {
         }
 
-        Log.d(logTag, "onKeyEvent $keyEvent textToCommit:$textToCommit")
-
         var ke: KeyEventAndroid? = null
         if (Build.VERSION.SDK_INT < 33 || textToCommit == null) {
             ke = KeyEventConverter.toAndroidKeyEvent(keyEvent)
@@ -438,21 +445,19 @@ class InputService : AccessibilityService() {
                 }
             }
         } else {
-            val handler = Handler(Looper.getMainLooper())
-            handler.post {
+            mainHandler.post {
                 ke?.let { event ->
-                    val possibleNodes = possibleAccessibiltyNodes()
-                    Log.d(logTag, "possibleNodes:$possibleNodes")
-                    for (item in possibleNodes) {
-                        val success = trySendKeyEvent(event, item, textToCommit)
-                        if (success) {
-                            if (keyEvent.getPress()) {
-                                val actionUpEvent = KeyEventAndroid(KeyEventAndroid.ACTION_UP, event.keyCode)
-                                trySendKeyEvent(actionUpEvent, item, textToCommit)
-                            }
-                            break
+                    val cachedNode = cachedInputNode
+                    if (cachedNode != null && dispatchKeyEventToNode(event, keyEvent, textToCommit, cachedNode)) {
+                        return@let
+                    }
+
+                    for (item in possibleAccessibiltyNodes()) {
+                        if (dispatchKeyEventToNode(event, keyEvent, textToCommit, item)) {
+                            return@let
                         }
                     }
+                    clearCachedInputNode()
                 }
             }
         }
@@ -550,8 +555,6 @@ class InputService : AccessibilityService() {
 
         val rootInActiveWindow = getRootInActiveWindow()
 
-        Log.d(logTag, "focusInput:$focusInput focusAccessibilityInput:$focusAccessibilityInput rootInActiveWindow:$rootInActiveWindow")
-
         if (focusInput != null) {
             if (focusInput.isFocusable() && focusInput.isEditable()) {
                 insertAccessibilityNode(linkedList, focusInput)
@@ -569,8 +572,6 @@ class InputService : AccessibilityService() {
         }
 
         val childFromFocusInput = findChildNode(focusInput)
-        Log.d(logTag, "childFromFocusInput:$childFromFocusInput")
-
         if (childFromFocusInput != null) {
             insertAccessibilityNode(linkedList, childFromFocusInput)
         }
@@ -579,7 +580,6 @@ class InputService : AccessibilityService() {
         if (childFromFocusAccessibilityInput != null) {
             insertAccessibilityNode(linkedList, childFromFocusAccessibilityInput)
         }
-        Log.d(logTag, "childFromFocusAccessibilityInput:$childFromFocusAccessibilityInput")
 
         if (rootInActiveWindow != null) {
             insertAccessibilityNode(linkedList, rootInActiveWindow)
@@ -592,16 +592,45 @@ class InputService : AccessibilityService() {
         return linkedList
     }
 
-    private fun trySendKeyEvent(event: KeyEventAndroid, node: AccessibilityNodeInfo, textToCommit: String?): Boolean {
-        node.refresh()
-        this.fakeEditTextForTextStateCalculation?.setSelection(0,0)
-        this.fakeEditTextForTextStateCalculation?.setText(null)
-
-        val text = node.getText()
-        var isShowingHint = false
-        if (Build.VERSION.SDK_INT >= 26) {
-            isShowingHint = node.isShowingHintText()
+    private fun clearCachedInputNode() {
+        if (Build.VERSION.SDK_INT < 33) {
+            cachedInputNode?.recycle()
         }
+        cachedInputNode = null
+        cachedInputState = null
+    }
+
+    private fun cacheInputNode(node: AccessibilityNodeInfo) {
+        if (Build.VERSION.SDK_INT < 33) {
+            if (cachedInputNode !== node) {
+                cachedInputNode?.recycle()
+                cachedInputNode = AccessibilityNodeInfo.obtain(node)
+            }
+        } else {
+            cachedInputNode = node
+        }
+    }
+
+    private fun dispatchKeyEventToNode(
+        event: KeyEventAndroid,
+        keyEvent: KeyEvent,
+        textToCommit: String?,
+        node: AccessibilityNodeInfo,
+    ): Boolean {
+        val success = trySendKeyEvent(event, node, textToCommit)
+        if (!success) {
+            return false
+        }
+        if (keyEvent.getPress() && textToCommit == null) {
+            val actionUpEvent = KeyEventAndroid(KeyEventAndroid.ACTION_UP, event.keyCode)
+            return trySendKeyEvent(actionUpEvent, node, null)
+        }
+        return true
+    }
+
+    private fun readNodeState(node: AccessibilityNodeInfo): EditableNodeState {
+        val text = node.text?.toString()
+        val isShowingHint = if (Build.VERSION.SDK_INT >= 26) node.isShowingHintText() else false
 
         var textSelectionStart = node.textSelectionStart
         var textSelectionEnd = node.textSelectionEnd
@@ -618,9 +647,174 @@ class InputService : AccessibilityService() {
             }
         }
 
+        return EditableNodeState(text, isShowingHint, textSelectionStart, textSelectionEnd)
+    }
+
+    private fun rememberNodeState(node: AccessibilityNodeInfo, state: EditableNodeState) {
+        cacheInputNode(node)
+        cachedInputState = state
+    }
+
+    private fun rememberEditTextState(node: AccessibilityNodeInfo, isShowingHint: Boolean) {
+        rememberNodeState(node, EditableNodeState(
+            if (isShowingHint) null else fakeEditTextForTextStateCalculation?.text?.toString(),
+            isShowingHint,
+            fakeEditTextForTextStateCalculation?.selectionStart ?: -1,
+            fakeEditTextForTextStateCalculation?.selectionEnd ?: -1,
+        ))
+    }
+
+    private fun updateNodeState(node: AccessibilityNodeInfo, state: EditableNodeState): Boolean {
+        val arguments = Bundle()
+        arguments.putCharSequence(
+            AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+            state.text ?: ""
+        )
+        var success = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+        if (!success) {
+            return false
+        }
+        if (state.selectionStart >= 0 && state.selectionEnd >= 0) {
+            val selectionArguments = Bundle()
+            selectionArguments.putInt(
+                AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT,
+                state.selectionStart
+            )
+            selectionArguments.putInt(
+                AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT,
+                state.selectionEnd
+            )
+            success = node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selectionArguments)
+        }
+        return success
+    }
+
+    private fun tryHandleFastEditableEvent(
+        event: KeyEventAndroid,
+        node: AccessibilityNodeInfo,
+        state: EditableNodeState,
+        textToCommit: String?,
+    ): Boolean? {
+        val selectionStart = state.selectionStart
+        val selectionEnd = state.selectionEnd
+        if (textToCommit != null) {
+            val newState = if (selectionStart == -1 || selectionEnd == -1) {
+                EditableNodeState(textToCommit, false, textToCommit.length, textToCommit.length)
+            } else {
+                val baseText = state.text ?: ""
+                val newText = baseText.replaceRange(selectionStart, selectionEnd, textToCommit)
+                val newSelection = selectionStart + textToCommit.length
+                EditableNodeState(newText, false, newSelection, newSelection)
+            }
+            val success = updateNodeState(node, newState)
+            if (success) {
+                rememberNodeState(node, newState)
+            }
+            return success
+        }
+
+        val baseText = state.text ?: return null
+        if (selectionStart == -1 || selectionEnd == -1) {
+            return null
+        }
+        if (event.action == KeyEventAndroid.ACTION_UP) {
+            rememberNodeState(node, state)
+            return true
+        }
+
+        val caretStart = minOf(selectionStart, selectionEnd)
+        val caretEnd = maxOf(selectionStart, selectionEnd)
+        val newState = when (event.keyCode) {
+            KeyEventAndroid.KEYCODE_DEL -> {
+                when {
+                    caretStart != caretEnd ->
+                        EditableNodeState(
+                            baseText.removeRange(caretStart, caretEnd),
+                            false,
+                            caretStart,
+                            caretStart
+                        )
+                    caretStart > 0 ->
+                        EditableNodeState(
+                            baseText.removeRange(caretStart - 1, caretStart),
+                            false,
+                            caretStart - 1,
+                            caretStart - 1
+                        )
+                    else -> state
+                }
+            }
+            KeyEventAndroid.KEYCODE_FORWARD_DEL -> {
+                when {
+                    caretStart != caretEnd ->
+                        EditableNodeState(
+                            baseText.removeRange(caretStart, caretEnd),
+                            false,
+                            caretStart,
+                            caretStart
+                        )
+                    caretStart < baseText.length ->
+                        EditableNodeState(
+                            baseText.removeRange(caretStart, caretStart + 1),
+                            false,
+                            caretStart,
+                            caretStart
+                        )
+                    else -> state
+                }
+            }
+            KeyEventAndroid.KEYCODE_DPAD_LEFT -> {
+                val newSelection = if (caretStart != caretEnd) caretStart else maxOf(0, caretStart - 1)
+                EditableNodeState(baseText, false, newSelection, newSelection)
+            }
+            KeyEventAndroid.KEYCODE_DPAD_RIGHT -> {
+                val newSelection = if (caretStart != caretEnd) caretEnd else minOf(baseText.length, caretEnd + 1)
+                EditableNodeState(baseText, false, newSelection, newSelection)
+            }
+            KeyEventAndroid.KEYCODE_MOVE_HOME -> EditableNodeState(baseText, false, 0, 0)
+            KeyEventAndroid.KEYCODE_MOVE_END -> {
+                val newSelection = baseText.length
+                EditableNodeState(baseText, false, newSelection, newSelection)
+            }
+            else -> return null
+        }
+        if (newState == state) {
+            rememberNodeState(node, state)
+            return true
+        }
+        val success = updateNodeState(node, newState)
+        if (success) {
+            rememberNodeState(node, newState)
+        }
+        return success
+    }
+
+    private fun trySendKeyEvent(event: KeyEventAndroid, node: AccessibilityNodeInfo, textToCommit: String?): Boolean {
+        val useCachedState = node === cachedInputNode && cachedInputState != null
+        if (!useCachedState && !node.refresh()) {
+            if (node === cachedInputNode) {
+                clearCachedInputNode()
+            }
+            return false
+        }
+        this.fakeEditTextForTextStateCalculation?.setSelection(0,0)
+        this.fakeEditTextForTextStateCalculation?.setText(null)
+
+        val state = if (useCachedState) cachedInputState!! else readNodeState(node)
+        val text = state.text
+        val isShowingHint = state.isShowingHint
+        val textSelectionStart = state.selectionStart
+        val textSelectionEnd = state.selectionEnd
+
         var success = false
 
-        Log.d(logTag, "existing text:$text textToCommit:$textToCommit textSelectionStart:$textSelectionStart textSelectionEnd:$textSelectionEnd")
+        val fastPathResult = tryHandleFastEditableEvent(event, node, state, textToCommit)
+        if (fastPathResult != null) {
+            if (!fastPathResult && node === cachedInputNode) {
+                clearCachedInputNode()
+            }
+            return fastPathResult
+        }
 
         if (textToCommit != null) {
             if ((textSelectionStart == -1) || (textSelectionEnd == -1)) {
@@ -633,7 +827,11 @@ class InputService : AccessibilityService() {
                     textSelectionStart,
                     textSelectionEnd
                 )
-                this.fakeEditTextForTextStateCalculation?.text?.insert(textSelectionStart, textToCommit)
+                this.fakeEditTextForTextStateCalculation?.text?.replace(
+                    textSelectionStart,
+                    textSelectionEnd,
+                    textToCommit
+                )
                 success = updateTextAndSelectionForAccessibiltyNode(node)
             }
         } else {
@@ -643,7 +841,6 @@ class InputService : AccessibilityService() {
                 this.fakeEditTextForTextStateCalculation?.setText(text)
             }
             if (textSelectionStart != -1 && textSelectionEnd != -1) {
-                Log.d(logTag, "setting selection $textSelectionStart $textSelectionEnd")
                 this.fakeEditTextForTextStateCalculation?.setSelection(
                     textSelectionStart,
                     textSelectionEnd
@@ -658,15 +855,18 @@ class InputService : AccessibilityService() {
                 it.layout(rect.left, rect.top, rect.right, rect.bottom)
                 it.onPreDraw()
                 if (event.action == KeyEventAndroid.ACTION_DOWN) {
-                    val succ = it.onKeyDown(event.getKeyCode(), event)
-                    Log.d(logTag, "onKeyDown $succ")
+                    it.onKeyDown(event.getKeyCode(), event)
                 } else if (event.action == KeyEventAndroid.ACTION_UP) {
-                    val success = it.onKeyUp(event.getKeyCode(), event)
-                    Log.d(logTag, "keyup $success")
+                    it.onKeyUp(event.getKeyCode(), event)
                 } else {}
             }
 
             success = updateTextAndSelectionForAccessibiltyNode(node)
+        }
+        if (success) {
+            rememberEditTextState(node, isShowingHint)
+        } else if (node === cachedInputNode) {
+            clearCachedInputNode()
         }
         return success
     }
@@ -702,7 +902,6 @@ class InputService : AccessibilityService() {
                     selectionEnd
                 )
                 success = node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, arguments)
-                Log.d(logTag, "Update selection to $selectionStart $selectionEnd success:$success")
             }
         }
 
@@ -733,6 +932,7 @@ class InputService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        clearCachedInputNode()
         ctx = null
         super.onDestroy()
     }

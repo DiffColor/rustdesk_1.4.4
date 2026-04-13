@@ -9,12 +9,14 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.InputEvent
+import android.view.KeyCharacterMap
 import android.view.KeyEvent as KeyEventAndroid
 import android.view.MotionEvent
 import android.view.ViewConfiguration
 import androidx.core.content.ContextCompat
 import hbb.MessageOuterClass.KeyEvent
 import hbb.KeyEventConverter
+import java.lang.Character
 import kotlin.math.max
 
 object SystemInputInjector {
@@ -53,24 +55,53 @@ object SystemInputInjector {
             return false
         }
         val keyEvent = KeyEvent.parseFrom(data)
-        if (keyEvent.hasSeq() || keyEvent.hasUnicode()) {
+        val events = when {
+            keyEvent.hasSeq() -> keyEventsFromText(keyEvent.seq)
+            keyEvent.hasUnicode() -> keyEventsFromText(String(Character.toChars(keyEvent.unicode)))
+            else -> keyEventsFromProto(keyEvent)
+        }
+        if (events.isEmpty()) {
             return false
         }
-        val event = KeyEventConverter.toAndroidKeyEvent(keyEvent)
-        if (event.keyCode == KeyEventAndroid.KEYCODE_UNKNOWN || event.keyCode == 0) {
-            return false
-        }
-        setInputSource(event, InputDevice.SOURCE_KEYBOARD)
-        val okDown = injectInputEvent(context, event)
-        if (!okDown) {
-            return false
-        }
-        if (keyEvent.press) {
-            val upEvent = KeyEventAndroid(KeyEventAndroid.ACTION_UP, event.keyCode)
-            setInputSource(upEvent, InputDevice.SOURCE_KEYBOARD)
-            return injectInputEvent(context, upEvent)
+        for (event in events) {
+            setInputSource(event, InputDevice.SOURCE_KEYBOARD)
+            if (!injectInputEvent(context, event)) {
+                return false
+            }
         }
         return true
+    }
+
+    private fun keyEventsFromText(text: String): List<KeyEventAndroid> {
+        if (text.isEmpty()) {
+            return emptyList()
+        }
+        val events = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray())
+            ?: return emptyList()
+        return events.toList()
+    }
+
+    private fun keyEventsFromProto(keyEvent: KeyEvent): List<KeyEventAndroid> {
+        val event = KeyEventConverter.toAndroidKeyEvent(keyEvent)
+        if (event.keyCode == KeyEventAndroid.KEYCODE_UNKNOWN || event.keyCode == 0) {
+            return emptyList()
+        }
+        if (!keyEvent.press) {
+            return listOf(event)
+        }
+        val upEvent = KeyEventAndroid(
+            event.downTime,
+            SystemClock.uptimeMillis(),
+            KeyEventAndroid.ACTION_UP,
+            event.keyCode,
+            0,
+            event.metaState,
+            event.deviceId,
+            event.scanCode,
+            event.flags,
+            InputDevice.SOURCE_KEYBOARD
+        )
+        return listOf(event, upEvent)
     }
 
     private fun injectMouse(context: Context, mask: Int, x: Int, y: Int): Boolean {
@@ -271,9 +302,9 @@ object SystemInputInjector {
 
     private fun resolveInjectMode(inputManager: InputManager): Int {
         val names = listOf(
+            "INJECT_INPUT_EVENT_MODE_ASYNC",
             "INJECT_INPUT_EVENT_MODE_WAIT_FOR_RESULT",
             "INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH",
-            "INJECT_INPUT_EVENT_MODE_ASYNC"
         )
         for (name in names) {
             try {
