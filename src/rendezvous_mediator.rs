@@ -79,7 +79,15 @@ impl RendezvousMediator {
         });
         #[cfg(target_os = "android")]
         let start_lan_listening = true;
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        #[cfg(all(
+            not(any(target_os = "android", target_os = "ios")),
+            feature = "host-turtlelab"
+        ))]
+        let start_lan_listening = true;
+        #[cfg(all(
+            not(any(target_os = "android", target_os = "ios")),
+            not(feature = "host-turtlelab")
+        ))]
         let start_lan_listening = crate::platform::is_installed();
         if start_lan_listening {
             std::thread::spawn(move || {

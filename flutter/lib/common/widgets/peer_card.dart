@@ -1570,7 +1570,9 @@ void connectInPeerTab(BuildContext context, Peer peer, PeerTabIndex tab,
       }
     }
   }
-  connect(context, peer.id,
+  final connectId =
+      tab == PeerTabIndex.lan && peer.ip.isNotEmpty ? peer.ip : peer.id;
+  connect(context, connectId,
       password: password,
       isSharedPassword: isSharedPassword,
       isFileTransfer: isFileTransfer,

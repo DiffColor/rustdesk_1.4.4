@@ -11,6 +11,7 @@ class Peer {
   String password; // shared ab password
   String username; // pc username
   String hostname;
+  String ip;
   String platform;
   String alias;
   List<dynamic> tags;
@@ -36,6 +37,7 @@ class Peer {
         password = json['password'] ?? '',
         username = json['username'] ?? '',
         hostname = json['hostname'] ?? '',
+        ip = json['ip'] ?? '',
         platform = json['platform'] ?? '',
         alias = json['alias'] ?? '',
         tags = json['tags'] ?? [],
@@ -54,6 +56,7 @@ class Peer {
       "password": password,
       "username": username,
       "hostname": hostname,
+      "ip": ip,
       "platform": platform,
       "alias": alias,
       "tags": tags,
@@ -99,6 +102,7 @@ class Peer {
     required this.password,
     required this.username,
     required this.hostname,
+    this.ip = '',
     required this.platform,
     required this.alias,
     required this.tags,

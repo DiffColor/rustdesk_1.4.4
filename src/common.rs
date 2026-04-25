@@ -1805,6 +1805,18 @@ pub fn apply_build_variant() {
     #[cfg(feature = "host-turtlelab")]
     {
         *config::APP_DATA_NAME.write().unwrap() = "rustdesk_host_turtlelab".to_owned();
+        config::OVERWRITE_SETTINGS
+            .write()
+            .unwrap()
+            .insert(keys::OPTION_DIRECT_SERVER.to_owned(), "Y".to_owned());
+        config::OVERWRITE_SETTINGS
+            .write()
+            .unwrap()
+            .insert(keys::OPTION_ENABLE_LAN_DISCOVERY.to_owned(), "Y".to_owned());
+        config::OVERWRITE_SETTINGS.write().unwrap().insert(
+            keys::OPTION_DIRECT_ACCESS_PORT.to_owned(),
+            (RENDEZVOUS_PORT + 2).to_string(),
+        );
         config::HARD_SETTINGS
             .write()
             .unwrap()

@@ -398,7 +398,8 @@ class _ConnectionPageState extends State<ConnectionPage>
                   },
                   onSelected: (option) {
                     setState(() {
-                      _idController.id = option.id;
+                      _idController.id =
+                          option.ip.isNotEmpty ? option.ip : option.id;
                       FocusScope.of(context).unfocus();
                     });
                   },
