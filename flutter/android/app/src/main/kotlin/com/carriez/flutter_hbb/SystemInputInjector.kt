@@ -9,14 +9,12 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.InputEvent
-import android.view.KeyCharacterMap
 import android.view.KeyEvent as KeyEventAndroid
 import android.view.MotionEvent
 import android.view.ViewConfiguration
 import androidx.core.content.ContextCompat
 import hbb.MessageOuterClass.KeyEvent
 import hbb.KeyEventConverter
-import java.lang.Character
 import kotlin.math.max
 
 object SystemInputInjector {
@@ -55,9 +53,10 @@ object SystemInputInjector {
             return false
         }
         val keyEvent = KeyEvent.parseFrom(data)
+        if (keyEvent.hasSeq() || keyEvent.hasUnicode()) {
+            return false
+        }
         val events = when {
-            keyEvent.hasSeq() -> keyEventsFromText(keyEvent.seq)
-            keyEvent.hasUnicode() -> keyEventsFromText(String(Character.toChars(keyEvent.unicode)))
             else -> keyEventsFromProto(keyEvent)
         }
         if (events.isEmpty()) {
@@ -70,15 +69,6 @@ object SystemInputInjector {
             }
         }
         return true
-    }
-
-    private fun keyEventsFromText(text: String): List<KeyEventAndroid> {
-        if (text.isEmpty()) {
-            return emptyList()
-        }
-        val events = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray())
-            ?: return emptyList()
-        return events.toList()
     }
 
     private fun keyEventsFromProto(keyEvent: KeyEvent): List<KeyEventAndroid> {
