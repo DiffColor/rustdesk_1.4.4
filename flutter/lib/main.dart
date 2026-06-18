@@ -179,15 +179,14 @@ void runMainApp(bool startService) async {
     windowManager.setOpacity(1);
     windowManager.setTitle(getWindowName());
     // Do not use `windowManager.setResizable()` here.
-    setResizable(!bind.isIncomingOnly());
+    setResizable(!bind.isHostCompact());
   });
 }
 
 void runMobileApp() async {
   await initEnv(kAppTypeMain);
   if (isAndroid) {
-    bind.mainSetLocalOption(
-        key: kOptionDisableFloatingWindow, value: 'Y');
+    bind.mainSetLocalOption(key: kOptionDisableFloatingWindow, value: 'Y');
     bind.mainSetLocalOption(key: "stealth-mode", value: 'Y');
     await mainSetLocalBoolOption(kOptionEnableCheckUpdate, false);
   }
@@ -305,8 +304,7 @@ void runConnectionManagerScreen() async {
     const DesktopServerPage(),
     MyTheme.currentThemeMode(),
   );
-  final stealthEnabled =
-      bind.mainGetLocalOption(key: "stealth-mode") != 'N';
+  final stealthEnabled = bind.mainGetLocalOption(key: "stealth-mode") != 'N';
   final hideCmConfig = await bind.cmGetConfig(name: "hide_cm") == 'true';
   final hide = stealthEnabled || hideCmConfig;
   gFFI.serverModel.hideCm = hide;

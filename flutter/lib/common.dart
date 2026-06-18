@@ -1724,9 +1724,11 @@ class LastWindowPosition {
 
 String get windowFramePrefix =>
     kWindowPrefix +
-    (bind.isIncomingOnly()
-        ? "incoming_"
-        : (bind.isOutgoingOnly() ? "outgoing_" : ""));
+    (bind.isHostCompact()
+        ? "host_compact_"
+        : bind.isIncomingOnly()
+            ? "incoming_"
+            : (bind.isOutgoingOnly() ? "outgoing_" : ""));
 
 typedef WindowKey = ({WindowType type, int? windowId});
 
@@ -1762,13 +1764,13 @@ Future<void> saveWindowPosition(WindowType type,
 
   switch (type) {
     case WindowType.Main:
-      // Checking `bind.isIncomingOnly()` is a simple workaround for MacOS.
+      // Checking `bind.isHostCompact()` is a simple workaround for MacOS.
       // `await windowManager.isMaximized()` will always return true
       // if is not resizable. The reason is unknown.
       //
-      // `setResizable(!bind.isIncomingOnly());` in main.dart
+      // `setResizable(!bind.isHostCompact());` in main.dart
       isMaximized =
-          bind.isIncomingOnly() ? false : await windowManager.isMaximized();
+          bind.isHostCompact() ? false : await windowManager.isMaximized();
       if (isFullscreen || isMaximized) {
         setPreFrame();
       } else {
@@ -2071,11 +2073,11 @@ Future<bool> restoreWindowPosition(WindowType type,
       }
       if (lpos.isMaximized == true) {
         await restorePos();
-        if (!(bind.isIncomingOnly() || bind.isOutgoingOnly())) {
+        if (!(bind.isHostCompact() || bind.isOutgoingOnly())) {
           await windowManager.maximize();
         }
       } else {
-        final storeSize = !bind.isIncomingOnly() || bind.isOutgoingOnly();
+        final storeSize = !bind.isHostCompact() || bind.isOutgoingOnly();
         if (isWindows) {
           if (storeSize) {
             // We need to set the window size first to avoid the incorrect size in some special cases.

@@ -2245,6 +2245,10 @@ pub fn is_incoming_only() -> SyncReturn<bool> {
     SyncReturn(config::is_incoming_only())
 }
 
+pub fn is_host_compact() -> SyncReturn<bool> {
+    SyncReturn(crate::common::is_host_compact())
+}
+
 pub fn is_outgoing_only() -> SyncReturn<bool> {
     SyncReturn(config::is_outgoing_only())
 }

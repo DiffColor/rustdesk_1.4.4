@@ -994,6 +994,11 @@ pub fn get_display_app_name() -> String {
 }
 
 #[inline]
+pub fn is_host_compact() -> bool {
+    cfg!(feature = "host-turtlelab")
+}
+
+#[inline]
 pub fn is_rustdesk() -> bool {
     hbb_common::config::APP_NAME.read().unwrap().eq("RustDesk")
 }
@@ -1817,10 +1822,6 @@ pub fn apply_build_variant() {
             keys::OPTION_DIRECT_ACCESS_PORT.to_owned(),
             (RENDEZVOUS_PORT + 2).to_string(),
         );
-        config::HARD_SETTINGS
-            .write()
-            .unwrap()
-            .insert("conn-type".to_owned(), "incoming".to_owned());
     }
 }
 

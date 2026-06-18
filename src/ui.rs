@@ -288,6 +288,10 @@ impl UI {
         hbb_common::config::is_incoming_only()
     }
 
+    fn is_host_compact(&self) -> bool {
+        crate::common::is_host_compact()
+    }
+
     pub fn is_outgoing_only(&self) -> bool {
         hbb_common::config::is_outgoing_only()
     }
@@ -710,6 +714,7 @@ impl sciter::EventHandler for UI {
         fn is_custom_client();
         fn is_outgoing_only();
         fn is_incoming_only();
+        fn is_host_compact();
         fn is_disable_settings();
         fn is_disable_account();
         fn is_disable_installation();

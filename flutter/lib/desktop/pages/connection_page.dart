@@ -36,7 +36,7 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
   Timer? _updateTimer;
 
   double get em => 14.0;
-  double? get height => bind.isIncomingOnly() ? null : em * 3;
+  double? get height => bind.isHostCompact() ? null : em * 3;
 
   @override
   void initState() {
@@ -54,7 +54,7 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final isIncomingOnly = bind.isIncomingOnly();
+    final isHostCompact = bind.isHostCompact();
     startServiceWidget() => Offstage(
           offstage: !_svcStopped.value,
           child: InkWell(
@@ -84,17 +84,17 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
               ),
             ).marginSymmetric(horizontal: em),
             Container(
-              width: isIncomingOnly ? 226 : null,
+              width: isHostCompact ? 226 : null,
               child: _buildConnStatusMsg(),
             ),
             // stop
-            if (!isIncomingOnly) startServiceWidget(),
+            if (!isHostCompact) startServiceWidget(),
           ],
         );
 
     return Container(
       height: height,
-      child: Obx(() => isIncomingOnly
+      child: Obx(() => isHostCompact
           ? Column(
               children: [
                 basicWidget(),
@@ -105,7 +105,7 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
               ],
             )
           : basicWidget()),
-    ).paddingOnly(right: isIncomingOnly ? 8 : 0);
+    ).paddingOnly(right: isHostCompact ? 8 : 0);
   }
 
   _buildConnStatusMsg() {

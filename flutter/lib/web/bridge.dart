@@ -1604,6 +1604,10 @@ class RustdeskImpl {
     return false;
   }
 
+  bool isHostCompact({dynamic hint}) {
+    return false;
+  }
+
   bool isOutgoingOnly({dynamic hint}) {
     return false;
   }
