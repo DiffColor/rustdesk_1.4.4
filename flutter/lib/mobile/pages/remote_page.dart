@@ -455,12 +455,15 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   Widget getRawPointerAndKeyBody(Widget child) {
     final ffiModel = Provider.of<FfiModel>(context);
+    final useSoftKeyboard = _showEdit && keyboardVisibilityController.isVisible;
     return RawPointerMouseRegion(
       cursor: ffiModel.keyboard ? SystemMouseCursors.none : MouseCursor.defer,
       inputModel: inputModel,
       // Disable RawKeyFocusScope before the connecting is established.
       // The "Delete" key on the soft keyboard may be grabbed when inputting the password dialog.
-      child: gFFI.ffiModel.pi.isSet.isTrue
+      // Also disable it while the soft keyboard input field is active. Some Android IMEs emit
+      // both TextField changes and key events for the same character, which duplicates remote input.
+      child: gFFI.ffiModel.pi.isSet.isTrue && !useSoftKeyboard
           ? RawKeyFocusScope(
               focusNode: _physicalFocusNode,
               inputModel: inputModel,
