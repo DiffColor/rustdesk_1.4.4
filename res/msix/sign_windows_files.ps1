@@ -120,6 +120,7 @@ try {
         if (-not $statusAllowed) {
             throw "Signature status was not allowed for $($file.FullName) [$($signature.Status)]"
         }
+        if ($expectedRootTrustFailure) { $global:LASTEXITCODE = 0 }
         Write-Host "Signed $($file.Name) with $($cert.Subject) [$($cert.Thumbprint)]"
     }
     $succeeded = $true

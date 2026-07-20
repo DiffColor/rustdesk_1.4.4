@@ -386,6 +386,7 @@ jobs:
               if ($verifyExitCode -ne 0 -and -not $expectedRootTrustFailure) { throw "Unexpected MSIX SignTool verification failure" }
               $statusAllowed = $signature.Status -in @("Valid", "NotTrusted") -or ($signature.Status -eq "UnknownError" -and $expectedRootTrustFailure)
               if (-not $statusAllowed) { throw "MSIX signature status was not allowed [$($signature.Status)]" }
+              if ($expectedRootTrustFailure) { $global:LASTEXITCODE = 0 }
             }
             foreach ($build in $builds) {
               Copy-Item $build.Output "$($build.Dir)\rustdesk-web-identity.msix"
@@ -594,6 +595,7 @@ jobs:
             $statusAllowed = $signature.Status -in $allowedStatuses -or
               ($allowUntrustedRoot -and $signature.Status -eq "UnknownError" -and $expectedRootTrustFailure)
             if (-not $statusAllowed) { throw "Windows release signature status was not allowed: $($file.FullName) [$($signature.Status)]" }
+            if ($expectedRootTrustFailure) { $global:LASTEXITCODE = 0 }
             Write-Host "Verified $($file.Name): $($signature.SignerCertificate.Subject) [$($signature.Status)]"
           }
 
