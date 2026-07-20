@@ -4,14 +4,21 @@ param(
     [ValidateSet("Install", "Uninstall")]
     [string]$Action,
 
+    [Parameter(Mandatory = $true)]
+    [string]$RequestId,
+
     [string]$PackageName = "MendHands.RustDesk",
     [string]$PackagePath,
     [string]$CertificatePath,
-    [string]$ExternalLocation
+    [string]$ExternalLocation,
+    [Parameter(Mandatory = $true)]
+    [string]$StateDirectory
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+$OwnershipPath = Join-Path $StateDirectory "owned-certificates"
+$DesiredStatePath = Join-Path $StateDirectory "desired-state"
 
 function Get-PackageCertificate {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -47,8 +54,27 @@ function Add-TrustedPeopleCertificate {
     }
 }
 
+function Test-TrustedPeopleCertificate {
+    param([Parameter(Mandatory = $true)][string]$Thumbprint)
+
+    $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+        [System.Security.Cryptography.X509Certificates.StoreName]::TrustedPeople,
+        [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
+    )
+    try {
+        $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+        return $store.Certificates.Find(
+            [System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
+            $Thumbprint,
+            $false
+        ).Count -gt 0
+    } finally {
+        $store.Close()
+    }
+}
+
 function Remove-TrustedPeopleCertificate {
-    param([Parameter(Mandatory = $true)]$Certificate)
+    param([Parameter(Mandatory = $true)][string]$Thumbprint)
 
     $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
         [System.Security.Cryptography.X509Certificates.StoreName]::TrustedPeople,
@@ -58,7 +84,7 @@ function Remove-TrustedPeopleCertificate {
         $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
         $matches = $store.Certificates.Find(
             [System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
-            $Certificate.Thumbprint,
+            $Thumbprint,
             $false
         )
         foreach ($match in $matches) {
@@ -69,53 +95,170 @@ function Remove-TrustedPeopleCertificate {
     }
 }
 
+function Add-OwnedCertificate {
+    param([Parameter(Mandatory = $true)][string]$Thumbprint)
+
+    $owned = if (Test-Path -LiteralPath $OwnershipPath -PathType Leaf) {
+        @(Get-Content -LiteralPath $OwnershipPath)
+    } else {
+        @()
+    }
+    if ($Thumbprint -notin $owned) {
+        Add-Content -LiteralPath $OwnershipPath -Value $Thumbprint
+    }
+}
+
+function Remove-OwnedCertificate {
+    param([Parameter(Mandatory = $true)][string]$Thumbprint)
+
+    if (-not (Test-Path -LiteralPath $OwnershipPath -PathType Leaf)) {
+        return
+    }
+    $remaining = @(Get-Content -LiteralPath $OwnershipPath | Where-Object { $_ -ne $Thumbprint })
+    if ($remaining.Count -eq 0) {
+        Remove-Item -LiteralPath $OwnershipPath -Force -ErrorAction SilentlyContinue
+    } else {
+        Set-Content -LiteralPath $OwnershipPath -Value $remaining
+    }
+}
+
+function Remove-OwnedCertificates {
+    if (-not (Test-Path -LiteralPath $OwnershipPath -PathType Leaf)) {
+        return
+    }
+    foreach ($thumbprint in Get-Content -LiteralPath $OwnershipPath) {
+        if ($thumbprint -match '^[0-9A-Fa-f]{40,128}$') {
+            Remove-TrustedPeopleCertificate -Thumbprint $thumbprint
+        }
+    }
+    Remove-Item -LiteralPath $OwnershipPath -Force -ErrorAction SilentlyContinue
+}
+
+function Remove-ObsoleteOwnedCertificates {
+    param([Parameter(Mandatory = $true)][string]$KeepThumbprint)
+
+    if (-not (Test-Path -LiteralPath $OwnershipPath -PathType Leaf)) {
+        return
+    }
+    $remaining = @()
+    foreach ($thumbprint in Get-Content -LiteralPath $OwnershipPath) {
+        if ($thumbprint -eq $KeepThumbprint) {
+            $remaining += $thumbprint
+            continue
+        }
+        try {
+            Remove-TrustedPeopleCertificate -Thumbprint $thumbprint
+        } catch {
+            Write-Warning "Could not remove obsolete sparse identity certificate $thumbprint"
+            $remaining += $thumbprint
+        }
+    }
+    if ($remaining.Count -eq 0) {
+        Remove-Item -LiteralPath $OwnershipPath -Force -ErrorAction SilentlyContinue
+    } else {
+        Set-Content -LiteralPath $OwnershipPath -Value $remaining
+    }
+}
+
 function Remove-IdentityPackage {
     Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue |
         Remove-AppxPackage -ErrorAction Stop
 }
 
-if ($Action -eq "Install") {
-    if ([Environment]::OSVersion.Version.Build -lt 19041) {
-        Write-Host "Sparse MSIX identity requires Windows build 19041 or newer; skipping registration."
-        exit 0
-    }
-    if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) {
-        throw "Sparse MSIX package was not found: $PackagePath"
-    }
-    if (-not (Test-Path -LiteralPath $ExternalLocation -PathType Container)) {
-        throw "RustDesk installation directory was not found: $ExternalLocation"
-    }
+function Test-CurrentRequest {
+    return (Test-Path -LiteralPath $DesiredStatePath -PathType Leaf) -and
+        ((Get-Content -LiteralPath $DesiredStatePath -Raw).Trim() -eq "$Action|$RequestId")
+}
 
-    $certificate = Get-PackageCertificate -Path $CertificatePath
-    $certificateAdded = Add-TrustedPeopleCertificate -Certificate $certificate
-    try {
-        Add-AppxPackage `
-            -Path $PackagePath `
-            -ExternalLocation $ExternalLocation `
-            -ForceUpdateFromAnyVersion `
-            -ErrorAction Stop
+function Invoke-IdentityAction {
+    if ($Action -eq "Install") {
+        if ([Environment]::OSVersion.Version.Build -lt 19041) {
+            Write-Host "Sparse MSIX identity requires Windows build 19041 or newer; skipping registration."
+            return
+        }
+        if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) {
+            throw "Sparse MSIX package was not found: $PackagePath"
+        }
+        if (-not (Test-Path -LiteralPath $ExternalLocation -PathType Container)) {
+            throw "RustDesk installation directory was not found: $ExternalLocation"
+        }
 
-        $registered = Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue
-        if ($null -eq $registered) {
-            throw "Sparse MSIX identity registration did not produce package $PackageName"
-        }
-        Write-Host "Registered sparse MSIX identity: $($registered.PackageFamilyName)"
-    } catch {
-        $registered = Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue
-        if ($null -ne $registered) {
-            Write-Warning "Sparse MSIX update was skipped; existing identity remains registered: $($_.Exception.Message)"
-            exit 0
-        }
-        if ($certificateAdded) {
-            Remove-TrustedPeopleCertificate -Certificate $certificate
-        }
-        throw
-    }
-} else {
-    Remove-IdentityPackage
-    if ($CertificatePath -and (Test-Path -LiteralPath $CertificatePath -PathType Leaf)) {
         $certificate = Get-PackageCertificate -Path $CertificatePath
-        Remove-TrustedPeopleCertificate -Certificate $certificate
+        $certificateAdded = $false
+        if (-not (Test-TrustedPeopleCertificate -Thumbprint $certificate.Thumbprint)) {
+            Add-OwnedCertificate -Thumbprint $certificate.Thumbprint
+            try {
+                $certificateAdded = Add-TrustedPeopleCertificate -Certificate $certificate
+                if (-not $certificateAdded) {
+                    Remove-OwnedCertificate -Thumbprint $certificate.Thumbprint
+                }
+            } catch {
+                Remove-OwnedCertificate -Thumbprint $certificate.Thumbprint
+                throw
+            }
+        }
+        try {
+            Add-AppxPackage `
+                -Path $PackagePath `
+                -ExternalLocation $ExternalLocation `
+                -ForceUpdateFromAnyVersion `
+                -ErrorAction Stop
+
+            $registered = Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue
+            if ($null -eq $registered) {
+                throw "Sparse MSIX identity registration did not produce package $PackageName"
+            }
+            if (-not (Test-CurrentRequest)) {
+                Remove-IdentityPackage
+                Remove-OwnedCertificates
+                return
+            }
+            try {
+                Remove-ObsoleteOwnedCertificates -KeepThumbprint $certificate.Thumbprint
+            } catch {
+                Write-Warning "Could not finish obsolete sparse identity certificate cleanup"
+            }
+            Write-Host "Registered sparse MSIX identity: $($registered.PackageFamilyName)"
+        } catch {
+            if ($certificateAdded) {
+                Remove-TrustedPeopleCertificate -Thumbprint $certificate.Thumbprint
+                Remove-OwnedCertificate -Thumbprint $certificate.Thumbprint
+            }
+            $registered = Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue
+            if ($null -ne $registered) {
+                if (-not (Test-CurrentRequest)) {
+                    Remove-IdentityPackage
+                    Remove-OwnedCertificates
+                    return
+                }
+                Write-Warning "Sparse MSIX update was skipped; existing identity remains registered: $($_.Exception.Message)"
+                return
+            }
+            throw
+        }
+    } else {
+        Remove-IdentityPackage
+        Remove-OwnedCertificates
+        Write-Host "Removed sparse MSIX identity: $PackageName"
     }
-    Write-Host "Removed sparse MSIX identity: $PackageName"
+}
+
+$mutex = [System.Threading.Mutex]::new($false, "MendHands.RustDesk.SparseIdentity")
+$hasLock = $false
+try {
+    try {
+        $hasLock = $mutex.WaitOne()
+    } catch [System.Threading.AbandonedMutexException] {
+        $hasLock = $true
+    }
+    if (-not (Test-CurrentRequest)) {
+        Write-Host "A newer sparse MSIX identity request superseded this operation."
+        return
+    }
+    Invoke-IdentityAction
+} finally {
+    if ($hasLock) {
+        $mutex.ReleaseMutex()
+    }
+    $mutex.Dispose()
 }

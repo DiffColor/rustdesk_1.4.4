@@ -20,8 +20,6 @@
 
 		<CustomAction Id="LaunchApp" ExeCommand="" Return="asyncNoWait" FileRef="App.exe" />
 		<CustomAction Id="LaunchAppTray" ExeCommand=" --tray" Return="asyncNoWait" FileRef="App.exe" />
-		<CustomAction Id="RegisterSparseIdentity" ExeCommand=" --register-sparse-identity" Return="ignore" Impersonate="yes" Execute="immediate" FileRef="App.exe" />
-		<CustomAction Id="UnregisterSparseIdentity" ExeCommand=" --unregister-sparse-identity" Return="ignore" Impersonate="yes" Execute="immediate" FileRef="App.exe" />
 		<Property Id="TerminateProcesses" Value="AppTest.exe" />
 		<CustomAction Id="TerminateProcesses.SetParam" Return="check" Property="TerminateProcesses" Value="$(var.Product).exe" />
 		<CustomAction Id="TerminateBrokers.SetParam" Return="check" Property="TerminateProcesses" Value="RuntimeBroker_rustdesk.exe" />
@@ -57,8 +55,7 @@
 
 			<!-- Launch ClientLauncher if installing or already installed and not uninstalling -->
 			<!-- https://learn.microsoft.com/en-us/windows/win32/msi/uilevel -->
-			<Custom Action="RegisterSparseIdentity" After="InstallFinalize" Condition="NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)" />
-			<Custom Action="LaunchApp" After="RegisterSparseIdentity" Condition="(NOT UILevel=2) AND (NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)) "/>
+			<Custom Action="LaunchApp" After="InstallFinalize" Condition="(NOT UILevel=2) AND (NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)) "/>
 			<Custom Action="LaunchAppTray" After="InstallFinalize" Condition="(LAUNCH_TRAY_APP=&quot;Y&quot; OR LAUNCH_TRAY_APP=&quot;1&quot;) AND (NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)) AND (NOT STOP_SERVICE=&quot;&apos;Y&apos;&quot;) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;)"/>
 
 			<!-- https://learn.microsoft.com/en-us/windows/win32/msi/operating-system-property-values -->
@@ -90,7 +87,6 @@
 
 			<Custom Action="UninstallPrinter" Before="RemoveInstallFolder" Condition="VersionNT &gt;= 603" />
 
-			<Custom Action="UnregisterSparseIdentity" Before="TerminateProcesses" Condition="Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE" />
 			<Custom Action="TerminateProcesses" Before="RemoveInstallFolder"/>
 			<Custom Action="TerminateProcesses.SetParam" Before="TerminateProcesses"/>
 			<Custom Action="TerminateBrokers" Before="RemoveInstallFolder"/>

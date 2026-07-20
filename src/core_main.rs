@@ -253,9 +253,11 @@ pub fn core_main() -> Option<Vec<String>> {
                 hbb_common::allow_err!(crate::platform::windows::uninstall_cert());
                 return None;
             } else if args[0] == "--register-sparse-identity" {
+                #[cfg(windows)]
                 hbb_common::allow_err!(crate::platform::windows::manage_sparse_identity("Install"));
                 return None;
             } else if args[0] == "--unregister-sparse-identity" {
+                #[cfg(windows)]
                 hbb_common::allow_err!(crate::platform::windows::manage_sparse_identity(
                     "Uninstall"
                 ));

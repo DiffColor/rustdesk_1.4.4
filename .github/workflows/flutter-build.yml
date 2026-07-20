@@ -314,6 +314,7 @@ jobs:
       - name: Build and sign sparse MSIX identity packages
         if: env.UPLOAD_ARTIFACT == 'true'
         continue-on-error: true
+        timeout-minutes: 5
         shell: pwsh
         env:
           IDENTITY_PFX_BASE64: ${{ secrets.WINDOWS_IDENTITY_PFX_BASE64 }}
@@ -321,26 +322,66 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           if (-not $env:IDENTITY_PFX_BASE64 -or -not $env:IDENTITY_PFX_PASSWORD) { Write-Warning "Sparse MSIX signing secrets are missing; continuing without identity package"; exit 0 }
-          $sdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Directory | Sort-Object Name -Descending | Select-Object -First 1
-          $makeappx = Join-Path $sdk.FullName "x64\makeappx.exe"; $signtool = Join-Path $sdk.FullName "x64\signtool.exe"
-          [IO.File]::WriteAllBytes("identity.pfx", [Convert]::FromBase64String($env:IDENTITY_PFX_BASE64))
-          $securePassword = ConvertTo-SecureString $env:IDENTITY_PFX_PASSWORD -AsPlainText -Force
-          $cert = (Get-PfxData -FilePath identity.pfx -Password $securePassword).EndEntityCertificates | Select-Object -First 1
-          Export-Certificate -Cert $cert -FilePath identity.cer | Out-Null
-          Import-Certificate -FilePath identity.cer -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
+          if ($env:TAG_NAME -notmatch '^v?\d+\.\d+\.\d+(?:[.-]\d+)?$') { Write-Warning "Sparse MSIX requires a release version tag; continuing without identity package"; exit 0 }
+          $pfxPath = Join-Path $env:RUNNER_TEMP "mendhands-identity-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.pfx"
+          $cerPath = Join-Path $env:RUNNER_TEMP "mendhands-identity-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.cer"
+          $certMarker = Join-Path $env:RUNNER_TEMP "mendhands-identity-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.thumbprint"
+          $cert = $null; $trustedByStep = $false; $succeeded = $false
           $builds = @(@{Dir="rustdesk";Exe="rustdesk.exe"}, @{Dir="rustdesk-host";Exe="rustdesk.exe"})
-          foreach ($build in $builds) {
-            Remove-Item identity-stage -Recurse -Force -ErrorAction SilentlyContinue; New-Item identity-stage\Assets -ItemType Directory | Out-Null
-            python res/msix/build_sparse_msix.py --version $env:TAG_NAME --web-host mendhands.pages.dev --executable $build.Exe --output identity-stage\AppxManifest.xml
-            Copy-Item res\icon.png identity-stage\Assets\storelogo.png; Copy-Item res\icon.png identity-stage\Assets\Square150x150Logo.png; Copy-Item res\icon.png identity-stage\Assets\Square44x44Logo.png
-            & $makeappx pack /o /d identity-stage /nv /p "$($build.Dir)\mendhands-rustdesk-identity.msix"; if ($LASTEXITCODE) { throw "MakeAppx failed" }
-            & $signtool sign /fd SHA256 /f identity.pfx /p $env:IDENTITY_PFX_PASSWORD "$($build.Dir)\mendhands-rustdesk-identity.msix"; if ($LASTEXITCODE) { throw "MSIX signing failed" }
-            & $signtool verify /pa /v "$($build.Dir)\mendhands-rustdesk-identity.msix"; if ($LASTEXITCODE) { throw "MSIX verification failed" }
-            Copy-Item res\msix\manage_sparse_identity.ps1 $build.Dir
+          try {
+            $sdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+            $makeappx = Join-Path $sdk.FullName "x64\makeappx.exe"; $signtool = Join-Path $sdk.FullName "x64\signtool.exe"
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:IDENTITY_PFX_BASE64))
+            $securePassword = ConvertTo-SecureString $env:IDENTITY_PFX_PASSWORD -AsPlainText -Force
+            $cert = (Get-PfxData -FilePath $pfxPath -Password $securePassword).EndEntityCertificates | Select-Object -First 1
+            if ($cert.Subject -ne "CN=MendHands") { throw "Sparse MSIX certificate publisher mismatch" }
+            Export-Certificate -Cert $cert -FilePath $cerPath | Out-Null
+            if (-not (Test-Path "Cert:\CurrentUser\TrustedPeople\$($cert.Thumbprint)")) {
+              $trustedByStep = $true
+              Set-Content $certMarker $cert.Thumbprint
+              Import-Certificate -FilePath $cerPath -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
+            }
+            foreach ($build in $builds) {
+              Remove-Item identity-stage -Recurse -Force -ErrorAction SilentlyContinue; New-Item identity-stage\Assets -ItemType Directory | Out-Null
+              python res/msix/build_sparse_msix.py --version $env:TAG_NAME --web-host mendhands.pages.dev --executable $build.Exe --output identity-stage\AppxManifest.xml
+              Copy-Item res\icon.png identity-stage\Assets\storelogo.png; Copy-Item res\icon.png identity-stage\Assets\Square150x150Logo.png; Copy-Item res\icon.png identity-stage\Assets\Square44x44Logo.png
+              & $makeappx pack /o /d identity-stage /nv /p "$($build.Dir)\mendhands-rustdesk-identity.msix"; if ($LASTEXITCODE) { throw "MakeAppx failed" }
+              & $signtool sign /fd SHA256 /f $pfxPath /p $env:IDENTITY_PFX_PASSWORD "$($build.Dir)\mendhands-rustdesk-identity.msix"; if ($LASTEXITCODE) { throw "MSIX signing failed" }
+              & $signtool verify /pa /v "$($build.Dir)\mendhands-rustdesk-identity.msix"; if ($LASTEXITCODE) { throw "MSIX verification failed" }
+              $signature = Get-AuthenticodeSignature "$($build.Dir)\mendhands-rustdesk-identity.msix"
+              if (-not $signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint) { throw "MSIX signer certificate mismatch" }
+            }
+            Copy-Item $cerPath rustdesk\mendhands-rustdesk-identity.cer; Copy-Item $cerPath rustdesk-host\mendhands-rustdesk-identity.cer
+            Set-Content identity-build-complete ok
+            $succeeded = $true
+          } finally {
+            if (-not $succeeded) {
+              foreach ($build in $builds) { Remove-Item "$($build.Dir)\mendhands-rustdesk-identity.*" -Force -ErrorAction SilentlyContinue }
+            }
+            if ($trustedByStep -and $cert) {
+              Remove-Item "Cert:\CurrentUser\TrustedPeople\$($cert.Thumbprint)" -Force -ErrorAction SilentlyContinue
+              if (-not (Test-Path "Cert:\CurrentUser\TrustedPeople\$($cert.Thumbprint)")) { Remove-Item $certMarker -Force -ErrorAction SilentlyContinue }
+            }
+            Remove-Item identity-stage -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item $pfxPath, $cerPath -Force -ErrorAction SilentlyContinue
           }
-          Copy-Item identity.cer rustdesk\mendhands-rustdesk-identity.cer; Copy-Item identity.cer rustdesk-host\mendhands-rustdesk-identity.cer
-          Remove-Item "Cert:\CurrentUser\TrustedPeople\$($cert.Thumbprint)" -Force -ErrorAction SilentlyContinue
-          Remove-Item identity.pfx -Force
+
+      - name: Clean sparse MSIX signing material
+        if: always() && env.UPLOAD_ARTIFACT == 'true'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $pfxPath = Join-Path $env:RUNNER_TEMP "mendhands-identity-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.pfx"
+          $cerPath = Join-Path $env:RUNNER_TEMP "mendhands-identity-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.cer"
+          $certMarker = Join-Path $env:RUNNER_TEMP "mendhands-identity-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.thumbprint"
+          $thumbprint = if (Test-Path $certMarker) { (Get-Content $certMarker -Raw).Trim() } else { $null }
+          if ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item "Cert:\CurrentUser\TrustedPeople\$thumbprint" -Force -ErrorAction Continue }
+          if (-not (Test-Path identity-build-complete)) { Remove-Item rustdesk\mendhands-rustdesk-identity.*, rustdesk-host\mendhands-rustdesk-identity.* -Force -ErrorAction Continue }
+          Remove-Item identity-stage -Recurse -Force -ErrorAction Continue
+          Remove-Item $pfxPath, $cerPath -Force -ErrorAction Continue
+          if (-not $thumbprint -or -not (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item $certMarker -Force -ErrorAction Continue }
+          Remove-Item identity-build-complete -Force -ErrorAction Continue
+          if ((Test-Path $pfxPath) -or ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint"))) { Write-Warning "Sparse MSIX signing material cleanup was incomplete" }
 
       - name: Build self-extracted executable
         shell: bash

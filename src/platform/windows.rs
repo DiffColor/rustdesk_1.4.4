@@ -1308,19 +1308,60 @@ pub fn copy_exe_cmd(src_exe: &str, exe: &str, path: &str) -> ResultType<String> 
 
 const SPARSE_IDENTITY_PACKAGE: &str = "mendhands-rustdesk-identity.msix";
 const SPARSE_IDENTITY_CERTIFICATE: &str = "mendhands-rustdesk-identity.cer";
-const SPARSE_IDENTITY_SCRIPT: &str = "manage_sparse_identity.ps1";
+const SPARSE_IDENTITY_SCRIPT: &str = include_str!("../../res/msix/manage_sparse_identity.ps1");
+const SPARSE_IDENTITY_STATE_DIR: &str = "MendHands\\rustdesk-sparse-identity";
 
 pub fn manage_sparse_identity(action: &str) -> ResultType<()> {
+    use hbb_common::base64::{engine::general_purpose::STANDARD, Engine as _};
+
     let exe = std::env::current_exe()?;
     let dir = exe
         .parent()
         .ok_or(anyhow!("Cannot locate RustDesk directory"))?;
-    let script = dir.join(SPARSE_IDENTITY_SCRIPT);
-    if !script.exists() {
-        log::warn!("Sparse MSIX helper is not present; skipping identity {action}");
+    let state_dir = match std::env::var_os("LOCALAPPDATA") {
+        Some(path) => std::path::PathBuf::from(path).join(SPARSE_IDENTITY_STATE_DIR),
+        None => {
+            log::warn!("LOCALAPPDATA is unavailable; skipping sparse identity {action}");
+            return Ok(());
+        }
+    };
+    if action == "Uninstall" && !state_dir.exists() {
         return Ok(());
     }
-    let status = std::process::Command::new("powershell.exe")
+    std::fs::create_dir_all(&state_dir)?;
+    let request_id = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    );
+    std::fs::write(
+        state_dir.join("desired-state"),
+        format!("{action}|{request_id}"),
+    )?;
+
+    let quote = |value: &std::path::Path| value.to_string_lossy().replace('\'', "''");
+    if SPARSE_IDENTITY_SCRIPT.lines().any(|line| line == "'@") {
+        bail!("Sparse identity script contains an invalid here-string terminator");
+    }
+    let command = format!(
+        "$s=@'\n{SPARSE_IDENTITY_SCRIPT}\n'@\n& ([ScriptBlock]::Create($s)) -Action '{action}' -RequestId '{request_id}' -PackagePath '{}' -CertificatePath '{}' -ExternalLocation '{}' -StateDirectory '{}'",
+        quote(&dir.join(SPARSE_IDENTITY_PACKAGE)),
+        quote(&dir.join(SPARSE_IDENTITY_CERTIFICATE)),
+        quote(dir),
+        quote(&state_dir),
+    );
+    let utf16 = command
+        .encode_utf16()
+        .flat_map(|unit| unit.to_le_bytes())
+        .collect::<Vec<_>>();
+    let encoded_command = STANDARD.encode(utf16);
+    if encoded_command.len() > 30_000 {
+        bail!("Sparse identity command exceeds the safe Windows command-line length");
+    }
+    let mut command = std::process::Command::new("powershell.exe");
+    command
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -1329,21 +1370,12 @@ pub fn manage_sparse_identity(action: &str) -> ResultType<()> {
             "Hidden",
             "-ExecutionPolicy",
             "Bypass",
-            "-File",
+            "-EncodedCommand",
         ])
-        .arg(script)
-        .arg("-Action")
-        .arg(action)
-        .arg("-PackagePath")
-        .arg(dir.join(SPARSE_IDENTITY_PACKAGE))
-        .arg("-CertificatePath")
-        .arg(dir.join(SPARSE_IDENTITY_CERTIFICATE))
-        .arg("-ExternalLocation")
-        .arg(dir)
-        .status()?;
-    if !status.success() {
-        bail!("Sparse MSIX identity {action} failed with {status}");
-    }
+        .arg(encoded_command);
+    command
+        .creation_flags(winapi::um::winbase::CREATE_NO_WINDOW)
+        .spawn()?;
     Ok(())
 }
 
@@ -1409,7 +1441,7 @@ fn get_after_install(
 }
 
 pub fn install_me(options: &str, path: String, silent: bool, debug: bool) -> ResultType<()> {
-    let uninstall_str = get_uninstall(false, false);
+    let uninstall_str = get_uninstall(false, false, false);
     let mut path = path.trim_end_matches('\\').to_owned();
     let (subkey, _path, start_menu, exe) = get_default_install_info();
     let mut exe = exe;
@@ -1516,21 +1548,17 @@ if exist \"{tmp_path}\\{app_name} Tray.lnk\" del /f /q \"{tmp_path}\\{app_name} 
     );
     let src_exe = std::env::current_exe()?.to_str().unwrap_or("").to_string();
     let src_dir = std::path::Path::new(&src_exe).parent().unwrap_or_default();
-    let identity_files = [
-        SPARSE_IDENTITY_PACKAGE,
-        SPARSE_IDENTITY_CERTIFICATE,
-        SPARSE_IDENTITY_SCRIPT,
-    ]
-    .iter()
-    .map(|name| {
-        format!(
-            "if exist \"{}\" copy /Y \"{}\" \"{path}\\{name}\"",
-            src_dir.join(name).display(),
-            src_dir.join(name).display()
-        )
-    })
-    .collect::<Vec<_>>()
-    .join("\n");
+    let identity_files = [SPARSE_IDENTITY_PACKAGE, SPARSE_IDENTITY_CERTIFICATE]
+        .iter()
+        .map(|name| {
+            format!(
+                "if exist \"{}\" copy /Y \"{}\" \"{path}\\{name}\"",
+                src_dir.join(name).display(),
+                src_dir.join(name).display()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
     // potential bug here: if run_cmd cancelled, but config file is changed.
     if let Some(lic) = get_license() {
@@ -1590,7 +1618,7 @@ copy /Y \"{tmp_path}\\Uninstall {app_name}.lnk\" \"{path}\\\"
 {dels}
 {import_config}
 {after_install}
-if exist \"{path}\\{identity_script}\" \"{exe}\" --register-sparse-identity
+if exist \"{path}\\{identity_package}\" \"{exe}\" --register-sparse-identity
 {install_remote_printer}
 {sleep}
     ",
@@ -1606,7 +1634,7 @@ if exist \"{path}\\{identity_script}\" \"{exe}\" --register-sparse-identity
         dels = if debug { "" } else { &dels },
         copy_exe = copy_exe_cmd(&src_exe, &exe, &path)?,
         identity_files = identity_files,
-        identity_script = SPARSE_IDENTITY_SCRIPT,
+        identity_package = SPARSE_IDENTITY_PACKAGE,
         import_config = get_import_config(&exe),
     );
     run_cmds(cmds, debug, "install")?;
@@ -1657,12 +1685,17 @@ fn get_before_uninstall(kill_self: bool) -> String {
 ///   the current process as well. If `false`, it will exclude the current process from the kill
 ///   command.
 /// - `uninstall_printer`: If `true`, includes commands to uninstall the remote printer.
+/// - `unregister_sparse_identity`: If `true`, asynchronously unregisters the optional identity.
 ///
 /// # Details
 /// The `uninstall_printer` parameter determines whether the command to uninstall the remote printer
 /// is included in the generated uninstall script. If `uninstall_printer` is `false`, the printer
 /// related command is omitted from the script.
-fn get_uninstall(kill_self: bool, uninstall_printer: bool) -> String {
+fn get_uninstall(
+    kill_self: bool,
+    uninstall_printer: bool,
+    unregister_sparse_identity: bool,
+) -> String {
     let reg_uninstall_string = get_reg("UninstallString");
     if reg_uninstall_string.to_lowercase().contains("msiexec.exe") {
         return reg_uninstall_string;
@@ -1679,12 +1712,20 @@ fn get_uninstall(kill_self: bool, uninstall_printer: bool) -> String {
         }
     }
     let (subkey, path, start_menu, _) = get_install_info();
+    let unregister_sparse_identity = if unregister_sparse_identity {
+        format!(
+            "\"{path}\\{}.exe\" --unregister-sparse-identity",
+            crate::get_app_name()
+        )
+    } else {
+        String::new()
+    };
     format!(
         "
     {before_uninstall}
     {uninstall_printer_cmd}
     {uninstall_cert_cmd}
-    if exist \"{path}\\{identity_script}\" \"{path}\\{app_name}.exe\" --unregister-sparse-identity
+    {unregister_sparse_identity}
     reg delete {subkey} /f
     {uninstall_amyuni_idd}
     if exist \"{path}\" rd /s /q \"{path}\"
@@ -1695,12 +1736,12 @@ fn get_uninstall(kill_self: bool, uninstall_printer: bool) -> String {
         before_uninstall=get_before_uninstall(kill_self),
         uninstall_amyuni_idd=get_uninstall_amyuni_idd(),
         app_name = crate::get_app_name(),
-        identity_script = SPARSE_IDENTITY_SCRIPT,
+        unregister_sparse_identity = unregister_sparse_identity,
     )
 }
 
 pub fn uninstall_me(kill_self: bool) -> ResultType<()> {
-    run_cmds(get_uninstall(kill_self, true), true, "uninstall")
+    run_cmds(get_uninstall(kill_self, true, true), true, "uninstall")
 }
 
 fn write_cmds(cmds: String, ext: &str, tip: &str) -> ResultType<std::path::PathBuf> {

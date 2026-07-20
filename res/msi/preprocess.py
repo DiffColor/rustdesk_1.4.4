@@ -16,6 +16,10 @@ import shutil
 g_indent_unit = "\t"
 g_version = ""
 g_build_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+g_excluded_payloads = {
+    "mendhands-rustdesk-identity.msix",
+    "mendhands-rustdesk-identity.cer",
+}
 
 # Replace the following links with your own in the custom arp properties.
 # https://learn.microsoft.com/en-us/windows/win32/msi/property-reference
@@ -117,7 +121,10 @@ def insert_components_between_tags(lines, index_start, app_name, dist_dir):
     idx = 1
     for file_path in path.glob("**/*"):
         if file_path.is_file():
-            if file_path.name.lower() == f"{app_name}.exe".lower():
+            if (
+                file_path.name.lower() == f"{app_name}.exe".lower()
+                or file_path.name.lower() in g_excluded_payloads
+            ):
                 continue
 
             subdir = str(file_path.parent.relative_to(path))
