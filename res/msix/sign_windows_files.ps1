@@ -87,10 +87,9 @@ try {
         $signature = Get-AuthenticodeSignature $file.FullName
         $actualThumbprint = if ($signature.SignerCertificate) { $signature.SignerCertificate.Thumbprint } else { "none" }
         Write-Host "Authenticode status=$($signature.Status) signer=$actualThumbprint"
-        if ($signature.Status -notin @("Valid", "NotTrusted") -or
-            -not $signature.SignerCertificate -or
+        if (-not $signature.SignerCertificate -or
             $signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint) {
-            throw "Signature identity verification failed: $($file.FullName) [$($signature.Status)]"
+            throw "Signature verification failed for $($file.FullName) [$($signature.Status)]"
         }
         if ([regex]::Matches($verifyOutput, '(?m)^\s*Signature Index:').Count -ne 1) {
             throw "Unexpected Authenticode signature count: $($file.FullName)"
@@ -113,6 +112,11 @@ try {
             $errorSummaries.Count -eq 1 -and $errorSummaries[0] -match '^\s*Number of errors: 1\s*$'
         if ($verifyExitCode -ne 0 -and -not $expectedRootTrustFailure) {
             throw "Unexpected SignTool verification failure: $($file.FullName)"
+        }
+        $statusAllowed = $signature.Status -in @("Valid", "NotTrusted") -or
+            ($signature.Status -eq "UnknownError" -and $expectedRootTrustFailure)
+        if (-not $statusAllowed) {
+            throw "Signature status was not allowed for $($file.FullName) [$($signature.Status)]"
         }
         Write-Host "Signed $($file.Name) with $($cert.Subject) [$($cert.Thumbprint)]"
     }

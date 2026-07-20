@@ -214,7 +214,7 @@ class SparseMsixManifestTests(unittest.TestCase):
         self.assertIn('@(".dll", ".exe", ".msi")', signing)
         self.assertNotIn('".sys"', signing)
         self.assertIn("/tr $timestampUrl /td SHA256", signing)
-        self.assertIn('$signature.Status -notin @("Valid", "NotTrusted")', signing)
+        self.assertIn('$signature.Status -eq "UnknownError" -and $expectedRootTrustFailure', signing)
         self.assertIn("Timestamp Verified by:", signing)
         self.assertIn("Windows signing temporary-file cleanup was incomplete", signing)
         self.assertIn("Windows signing trust cleanup was incomplete", signing)
@@ -260,7 +260,7 @@ class SparseMsixManifestTests(unittest.TestCase):
             self.assertIn("WINDOWS_IDENTITY_PFX_BASE64", workflow)
             self.assertIn("Windows release RFC3161 timestamp verification failed", workflow)
             self.assertIn('$allowedStatuses = if ($allowUntrustedRoot)', workflow)
-            self.assertIn("$signature.Status -notin $allowedStatuses", workflow)
+            self.assertIn('$allowUntrustedRoot -and $signature.Status -eq "UnknownError" -and $expectedRootTrustFailure', workflow)
             self.assertIn("$signature.SignerCertificate.Thumbprint -ne $expectedThumbprint", workflow)
             self.assertIn("Expected fallback signer thumbprint is missing", workflow)
             publish = workflow.split("- name: Publish Release", 1)[1].split("\n\n", 1)[0]
