@@ -363,9 +363,29 @@ jobs:
                 if ($LASTEXITCODE -eq 0) { $signed = $true; break }
               }
               if (-not $signed) { throw "MSIX signing failed" }
-              & $signtool verify /pa /v $build.Output; if ($LASTEXITCODE) { throw "MSIX verification failed" }
+              $verifyOutput = (& $signtool verify /pa /all /v $build.Output 2>&1 | Out-String)
+              $verifyExitCode = $LASTEXITCODE
+              Write-Host $verifyOutput
               $signature = Get-AuthenticodeSignature $build.Output
-              if (-not $signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint -or -not $signature.TimeStamperCertificate) { throw "MSIX signer certificate or timestamp mismatch" }
+              $actualThumbprint = if ($signature.SignerCertificate) { $signature.SignerCertificate.Thumbprint } else { "none" }
+              Write-Host "MSIX Authenticode status=$($signature.Status) signer=$actualThumbprint"
+              if ($signature.Status -notin @("Valid", "NotTrusted") -or -not $signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint) { throw "MSIX signer certificate mismatch [$($signature.Status)]" }
+              if ([regex]::Matches($verifyOutput, '(?m)^\s*Signature Index:').Count -ne 1) { throw "Unexpected MSIX signature count" }
+              if ($verifyOutput -notmatch '(?m)^\s*The signature is timestamped:' -or $verifyOutput -notmatch '(?m)^\s*Timestamp Verified by:') { throw "MSIX RFC3161 timestamp verification failed" }
+              $verifyLines = @($verifyOutput -split '\r?\n')
+              $rootErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*SignTool Error: A certificate chain processed, but terminated in a root\s*$') { $i } })
+              $providerErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*certificate which is not trusted by the trust provider\.\s*$') { $i } })
+              $signToolErrors = @($verifyLines | Where-Object { $_ -match '^\s*SignTool Error:' })
+              $verifiedSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of signatures successfully Verified:' })
+              $warningSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of warnings:' })
+              $errorSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of errors:' })
+              $expectedRootTrustFailure = $verifyExitCode -ne 0 -and
+                $signToolErrors.Count -eq 1 -and $rootErrorIndices.Count -eq 1 -and
+                $providerErrorIndices.Count -eq 1 -and $providerErrorIndices[0] -eq ($rootErrorIndices[0] + 1) -and
+                $verifiedSummaries.Count -eq 1 -and $verifiedSummaries[0] -match '^\s*Number of signatures successfully Verified: 0\s*$' -and
+                $warningSummaries.Count -eq 1 -and $warningSummaries[0] -match '^\s*Number of warnings: 0\s*$' -and
+                $errorSummaries.Count -eq 1 -and $errorSummaries[0] -match '^\s*Number of errors: 1\s*$'
+              if ($verifyExitCode -ne 0 -and -not $expectedRootTrustFailure) { throw "Unexpected MSIX SignTool verification failure" }
             }
             foreach ($build in $builds) {
               Copy-Item $build.Output "$($build.Dir)\rustdesk-web-identity.msix"
@@ -534,14 +554,41 @@ jobs:
             $env:EXPECTED_REMOTE_SIGNER_THUMBPRINT
           }
           if (-not $expectedThumbprint) { throw "Expected Windows release signer thumbprint is not configured" }
-          $allowedStatuses = if ($env:SIGN_BASE_URL -eq "") { @("Valid", "NotTrusted") } else { @("Valid") }
+          $allowUntrustedRoot = $env:SIGN_BASE_URL -eq ""
+          $allowedStatuses = if ($allowUntrustedRoot) { @("Valid", "NotTrusted") } else { @("Valid") }
+          $sdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Directory |
+            Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' -and (Test-Path (Join-Path $_.FullName "x64\signtool.exe")) } |
+            Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          if (-not $sdk) { throw "Windows SDK SignTool was not found" }
+          $signtool = Join-Path $sdk.FullName "x64\signtool.exe"
           foreach ($name in $expectedNames) {
             $file = Get-Item (Join-Path SignOutput $name) -ErrorAction Stop
+            $verifyOutput = (& $signtool verify /pa /all /v $file.FullName 2>&1 | Out-String)
+            $verifyExitCode = $LASTEXITCODE
+            Write-Host $verifyOutput
             $signature = Get-AuthenticodeSignature $file.FullName
-            if ($signature.Status -notin $allowedStatuses -or -not $signature.SignerCertificate -or -not $signature.TimeStamperCertificate) {
+            $actualThumbprint = if ($signature.SignerCertificate) { $signature.SignerCertificate.Thumbprint } else { "none" }
+            Write-Host "Release Authenticode status=$($signature.Status) signer=$actualThumbprint"
+            if ($signature.Status -notin $allowedStatuses -or -not $signature.SignerCertificate) {
               throw "Invalid or missing Authenticode signature: $($file.FullName) [$($signature.Status)]"
             }
             if ($signature.SignerCertificate.Thumbprint -ne $expectedThumbprint) { throw "Unexpected Windows release signer: $($file.FullName)" }
+            if ([regex]::Matches($verifyOutput, '(?m)^\s*Signature Index:').Count -ne 1) { throw "Unexpected Windows release signature count: $($file.FullName)" }
+            if ($verifyOutput -notmatch '(?m)^\s*The signature is timestamped:' -or $verifyOutput -notmatch '(?m)^\s*Timestamp Verified by:') { throw "Windows release RFC3161 timestamp verification failed: $($file.FullName)" }
+            $verifyLines = @($verifyOutput -split '\r?\n')
+            $rootErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*SignTool Error: A certificate chain processed, but terminated in a root\s*$') { $i } })
+            $providerErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*certificate which is not trusted by the trust provider\.\s*$') { $i } })
+            $signToolErrors = @($verifyLines | Where-Object { $_ -match '^\s*SignTool Error:' })
+            $verifiedSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of signatures successfully Verified:' })
+            $warningSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of warnings:' })
+            $errorSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of errors:' })
+            $expectedRootTrustFailure = $verifyExitCode -ne 0 -and
+              $signToolErrors.Count -eq 1 -and $rootErrorIndices.Count -eq 1 -and
+              $providerErrorIndices.Count -eq 1 -and $providerErrorIndices[0] -eq ($rootErrorIndices[0] + 1) -and
+              $verifiedSummaries.Count -eq 1 -and $verifiedSummaries[0] -match '^\s*Number of signatures successfully Verified: 0\s*$' -and
+              $warningSummaries.Count -eq 1 -and $warningSummaries[0] -match '^\s*Number of warnings: 0\s*$' -and
+              $errorSummaries.Count -eq 1 -and $errorSummaries[0] -match '^\s*Number of errors: 1\s*$'
+            if ($verifyExitCode -ne 0 -and (-not $allowUntrustedRoot -or -not $expectedRootTrustFailure)) { throw "Unexpected Windows release SignTool verification failure: $($file.FullName)" }
             Write-Host "Verified $($file.Name): $($signature.SignerCertificate.Subject) [$($signature.Status)]"
           }
 

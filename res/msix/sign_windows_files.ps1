@@ -85,26 +85,34 @@ try {
         $verifyExitCode = $LASTEXITCODE
         Write-Host $verifyOutput
         $signature = Get-AuthenticodeSignature $file.FullName
+        $actualThumbprint = if ($signature.SignerCertificate) { $signature.SignerCertificate.Thumbprint } else { "none" }
+        Write-Host "Authenticode status=$($signature.Status) signer=$actualThumbprint"
         if ($signature.Status -notin @("Valid", "NotTrusted") -or
             -not $signature.SignerCertificate -or
-            $signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint -or
-            -not $signature.TimeStamperCertificate) {
-            throw "Signature identity or timestamp verification failed: $($file.FullName)"
+            $signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint) {
+            throw "Signature identity verification failed: $($file.FullName) [$($signature.Status)]"
         }
         if ([regex]::Matches($verifyOutput, '(?m)^\s*Signature Index:').Count -ne 1) {
             throw "Unexpected Authenticode signature count: $($file.FullName)"
         }
-        if ($verifyExitCode -ne 0 -and $verifyOutput -notmatch '(?s)A certificate chain processed, but terminated in a root.*certificate which is not trusted by the trust provider') {
-            throw "Unexpected SignTool verification failure: $($file.FullName)"
+        if ($verifyOutput -notmatch '(?m)^\s*The signature is timestamped:' -or $verifyOutput -notmatch '(?m)^\s*Timestamp Verified by:') {
+            throw "RFC3161 timestamp verification failed: $($file.FullName)"
         }
-        $timestampChain = [Security.Cryptography.X509Certificates.X509Chain]::new()
-        try {
-            $timestampChain.ChainPolicy.RevocationMode = [Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
-            if (-not $timestampChain.Build($signature.TimeStamperCertificate)) {
-                throw "Timestamp certificate chain verification failed: $($file.FullName)"
-            }
-        } finally {
-            $timestampChain.Dispose()
+        $verifyLines = @($verifyOutput -split '\r?\n')
+        $rootErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*SignTool Error: A certificate chain processed, but terminated in a root\s*$') { $i } })
+        $providerErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*certificate which is not trusted by the trust provider\.\s*$') { $i } })
+        $signToolErrors = @($verifyLines | Where-Object { $_ -match '^\s*SignTool Error:' })
+        $verifiedSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of signatures successfully Verified:' })
+        $warningSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of warnings:' })
+        $errorSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of errors:' })
+        $expectedRootTrustFailure = $verifyExitCode -ne 0 -and
+            $signToolErrors.Count -eq 1 -and $rootErrorIndices.Count -eq 1 -and
+            $providerErrorIndices.Count -eq 1 -and $providerErrorIndices[0] -eq ($rootErrorIndices[0] + 1) -and
+            $verifiedSummaries.Count -eq 1 -and $verifiedSummaries[0] -match '^\s*Number of signatures successfully Verified: 0\s*$' -and
+            $warningSummaries.Count -eq 1 -and $warningSummaries[0] -match '^\s*Number of warnings: 0\s*$' -and
+            $errorSummaries.Count -eq 1 -and $errorSummaries[0] -match '^\s*Number of errors: 1\s*$'
+        if ($verifyExitCode -ne 0 -and -not $expectedRootTrustFailure) {
+            throw "Unexpected SignTool verification failure: $($file.FullName)"
         }
         Write-Host "Signed $($file.Name) with $($cert.Subject) [$($cert.Thumbprint)]"
     }
