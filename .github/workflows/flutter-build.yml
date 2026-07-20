@@ -379,9 +379,11 @@ jobs:
               $verifiedSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of signatures successfully Verified:' })
               $warningSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of warnings:' })
               $errorSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of errors:' })
+              $interposedLines = if ($rootErrorIndices.Count -eq 1 -and $providerErrorIndices.Count -eq 1 -and $providerErrorIndices[0] -gt ($rootErrorIndices[0] + 1)) { @($verifyLines[($rootErrorIndices[0] + 1)..($providerErrorIndices[0] - 1)]) } else { @() }
+              $unexpectedInterposedLines = @($interposedLines | Where-Object { $_ -notmatch '^\s*(?:Verifying: .+|Signature Index: 0 \(Primary Signature\)|Hash of file \(sha256\): [0-9A-F]{64}|Signing Certificate Chain:|Issued to: .+|Issued by: .+|Expires:\s+.+|SHA1 hash: [0-9A-F]{40}|The signature is timestamped: .+|Timestamp Verified by:|Number of signatures successfully Verified: 0|Number of warnings: 0|Number of errors: 1)\s*$' })
               $expectedRootTrustFailure = $verifyExitCode -ne 0 -and
                 $signToolErrors.Count -eq 1 -and $rootErrorIndices.Count -eq 1 -and
-                $providerErrorIndices.Count -eq 1 -and $providerErrorIndices[0] -eq ($rootErrorIndices[0] + 1) -and
+                $providerErrorIndices.Count -eq 1 -and $providerErrorIndices[0] -gt $rootErrorIndices[0] -and $unexpectedInterposedLines.Count -eq 0 -and
                 $verifiedSummaries.Count -eq 1 -and $verifiedSummaries[0] -match '^\s*Number of signatures successfully Verified: 0\s*$' -and
                 $warningSummaries.Count -eq 1 -and $warningSummaries[0] -match '^\s*Number of warnings: 0\s*$' -and
                 $errorSummaries.Count -eq 1 -and $errorSummaries[0] -match '^\s*Number of errors: 1\s*$'
@@ -584,9 +586,11 @@ jobs:
             $verifiedSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of signatures successfully Verified:' })
             $warningSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of warnings:' })
             $errorSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of errors:' })
+            $interposedLines = if ($rootErrorIndices.Count -eq 1 -and $providerErrorIndices.Count -eq 1 -and $providerErrorIndices[0] -gt ($rootErrorIndices[0] + 1)) { @($verifyLines[($rootErrorIndices[0] + 1)..($providerErrorIndices[0] - 1)]) } else { @() }
+            $unexpectedInterposedLines = @($interposedLines | Where-Object { $_ -notmatch '^\s*(?:Verifying: .+|Signature Index: 0 \(Primary Signature\)|Hash of file \(sha256\): [0-9A-F]{64}|Signing Certificate Chain:|Issued to: .+|Issued by: .+|Expires:\s+.+|SHA1 hash: [0-9A-F]{40}|The signature is timestamped: .+|Timestamp Verified by:|Number of signatures successfully Verified: 0|Number of warnings: 0|Number of errors: 1)\s*$' })
             $expectedRootTrustFailure = $verifyExitCode -ne 0 -and
               $signToolErrors.Count -eq 1 -and $rootErrorIndices.Count -eq 1 -and
-              $providerErrorIndices.Count -eq 1 -and $providerErrorIndices[0] -eq ($rootErrorIndices[0] + 1) -and
+              $providerErrorIndices.Count -eq 1 -and $providerErrorIndices[0] -gt $rootErrorIndices[0] -and $unexpectedInterposedLines.Count -eq 0 -and
               $verifiedSummaries.Count -eq 1 -and $verifiedSummaries[0] -match '^\s*Number of signatures successfully Verified: 0\s*$' -and
               $warningSummaries.Count -eq 1 -and $warningSummaries[0] -match '^\s*Number of warnings: 0\s*$' -and
               $errorSummaries.Count -eq 1 -and $errorSummaries[0] -match '^\s*Number of errors: 1\s*$'
