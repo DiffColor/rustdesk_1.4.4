@@ -1,10 +1,17 @@
 import importlib.util
+import struct
+import sys
+import tempfile
+import types
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT_PATH = Path(__file__).with_name("build_sparse_msix.py")
+JOB_SCRIPT_PATH = Path(__file__).parents[1] / "job.py"
+PORTABLE_SCRIPT_PATH = Path(__file__).parents[2] / "libs/portable/generate.py"
 RUNNER_MANIFEST_PATH = Path(__file__).parents[2] / "flutter/windows/runner/runner.exe.manifest"
 REPO_ROOT = Path(__file__).parents[2]
 
@@ -17,7 +24,76 @@ def load_module():
     return module
 
 
+def load_job_module():
+    spec = importlib.util.spec_from_file_location("job", JOB_SCRIPT_PATH)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_portable_module():
+    brotli = types.ModuleType("brotli")
+    setattr(brotli, "compress", lambda content, quality: content)
+    previous_brotli = sys.modules.get("brotli")
+    sys.modules["brotli"] = brotli
+    spec = importlib.util.spec_from_file_location("portable_generate", PORTABLE_SCRIPT_PATH)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if previous_brotli is None:
+            sys.modules.pop("brotli", None)
+        else:
+            sys.modules["brotli"] = previous_brotli
+    return module
+
+
 class SparseMsixManifestTests(unittest.TestCase):
+    def test_portable_payload_can_exclude_failed_identity_outputs(self):
+        portable = load_portable_module()
+        with tempfile.TemporaryDirectory() as folder:
+            Path(folder, "rustdesk.exe").write_bytes(b"app")
+            Path(folder, "rustdesk-web-identity.msix").write_bytes(b"partial")
+            table = portable.generate_md5_table(
+                folder, 1, ["rustdesk-web-identity.msix"]
+            )
+        self.assertIn("./rustdesk.exe", table)
+        self.assertNotIn("./rustdesk-web-identity.msix", table)
+
+    def test_remote_signing_preserves_existing_pe_signatures(self):
+        job = load_job_module()
+        pe = bytearray(512)
+        pe[0:2] = b"MZ"
+        struct.pack_into("<I", pe, 0x3C, 0x80)
+        pe[0x80:0x84] = b"PE\0\0"
+        struct.pack_into("<H", pe, 0x98, 0x20B)
+        struct.pack_into("<II", pe, 0x98 + 112 + 32, 0x180, 0x40)
+        struct.pack_into("<IHH", pe, 0x180, 0x40, 0x0200, 0x0002)
+        with tempfile.NamedTemporaryFile(suffix=".dll") as signed:
+            signed.write(pe)
+            signed.flush()
+            self.assertTrue(job.has_embedded_pe_signature(signed.name))
+            with mock.patch.object(job.shutil, "which", return_value="pwsh"), mock.patch.object(
+                job.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)
+            ) as run:
+                self.assertTrue(job.has_valid_pe_signature(signed.name))
+                self.assertEqual(run.call_args.kwargs["timeout"], 30)
+            with mock.patch.object(job.shutil, "which", return_value="pwsh"), mock.patch.object(
+                job.subprocess, "run", return_value=types.SimpleNamespace(returncode=1)
+            ):
+                self.assertFalse(job.has_valid_pe_signature(signed.name))
+
+        struct.pack_into("<IHH", pe, 0x180, 0, 0, 0)
+        with tempfile.NamedTemporaryFile(suffix=".dll") as malformed:
+            malformed.write(pe)
+            malformed.flush()
+            self.assertFalse(job.has_embedded_pe_signature(malformed.name))
+            self.assertFalse(job.has_valid_pe_signature(malformed.name))
+
     def test_normalizes_tag_versions_to_msix_four_part_version(self):
         module = load_module()
 
@@ -35,10 +111,12 @@ class SparseMsixManifestTests(unittest.TestCase):
 
     def test_renders_sparse_identity_and_verified_web_relationship(self):
         module = load_module()
+        self.assertEqual(module.PACKAGE_NAME, "RustDesk.WebIdentity")
+        self.assertEqual(module.PUBLISHER, "CN=RustDesk")
 
         manifest = module.render_manifest(
             version="1.4.4-11",
-            web_host="mendhands.pages.dev",
+            web_host="example.com",
         )
         root = ET.fromstring(manifest)
         ns = {
@@ -64,7 +142,7 @@ class SparseMsixManifestTests(unittest.TestCase):
             ns,
         )
         self.assertIsNotNone(host)
-        self.assertEqual(host.attrib["Name"], "mendhands.pages.dev")
+        self.assertEqual(host.attrib["Name"], "example.com")
 
         allow_external = root.find("f:Properties/uap10:AllowExternalContent", ns)
         self.assertIsNotNone(allow_external)
@@ -73,7 +151,7 @@ class SparseMsixManifestTests(unittest.TestCase):
     def test_rejects_web_host_with_scheme_or_path(self):
         module = load_module()
 
-        for host in ("https://mendhands.pages.dev", "mendhands.pages.dev/path", ""):
+        for host in ("https://example.com", "example.com/path", ""):
             with self.subTest(host=host):
                 with self.assertRaises(ValueError):
                     module.render_manifest(version="1.4.4", web_host=host)
@@ -110,18 +188,18 @@ class SparseMsixManifestTests(unittest.TestCase):
         self.assertIn('if unregister_sparse_identity {', windows)
         self.assertIn('.spawn()?', windows)
         self.assertIn('include_str!("../../res/msix/manage_sparse_identity.ps1")', windows)
-        self.assertIn('rustdesk-sparse-identity', windows)
+        self.assertIn('RustDesk\\\\web-identity', windows)
         self.assertNotIn('std::env::temp_dir().join(format!("rustdesk-sparse-identity-', windows)
         self.assertNotIn('Id="RegisterSparseIdentity"', msi)
         self.assertNotIn('Id="UnregisterSparseIdentity"', msi)
-        self.assertIn('"mendhands-rustdesk-identity.msix"', msi_preprocess)
+        self.assertIn('"rustdesk-web-identity.msix"', msi_preprocess)
         self.assertIn('file_path.name.lower() in g_excluded_payloads', msi_preprocess)
         self.assertIn('$StateDirectory', powershell)
         self.assertIn('Add-Content -LiteralPath $OwnershipPath', powershell)
         self.assertIn('Remove-OwnedCertificates', powershell)
         self.assertIn('Remove-ObsoleteOwnedCertificates', powershell)
         self.assertIn('[System.Threading.Mutex]::new', powershell)
-        self.assertIn('"MendHands.RustDesk.SparseIdentity"', powershell)
+        self.assertIn('"RustDesk.WebIdentity.Operation"', powershell)
         self.assertIn('$DesiredStatePath', powershell)
         self.assertIn('"$Action|$RequestId"', powershell)
         self.assertIn("$mutex.WaitOne()", powershell)
@@ -138,7 +216,10 @@ class SparseMsixManifestTests(unittest.TestCase):
         self.assertIn("/tr $timestampUrl /td SHA256", signing)
         self.assertIn("$signature.Status -ne \"Valid\"", signing)
         self.assertIn("$signature.TimeStamperCertificate", signing)
-        self.assertIn("Windows signing private key cleanup was incomplete", signing)
+        self.assertIn("Windows signing temporary-file cleanup was incomplete", signing)
+        self.assertIn("Windows signing trust cleanup was incomplete", signing)
+        self.assertIn("$expectedSignerMarker", signing)
+        self.assertIn("$KeepTrust", signing)
         self.assertIn("Preserved existing signature", signing)
         self.assertIn("Existing signature is invalid", signing)
 
@@ -148,12 +229,13 @@ class SparseMsixManifestTests(unittest.TestCase):
             self.assertIn("continue-on-error: true", step.split("- name:", 1)[0])
             self.assertIn("timeout-minutes: 5", step.split("- name:", 1)[0])
             self.assertIn("--version $env:TAG_NAME", step.split("- name:", 1)[0])
+            self.assertIn("--web-host $env:IDENTITY_WEB_HOST", step.split("- name:", 1)[0])
             self.assertIn("$env:TAG_NAME -notmatch", step.split("try {", 1)[0])
             self.assertIn("'^v?\\d+\\.\\d+\\.\\d+(?:[.-]\\d+)?$'", step)
             self.assertIn("Get-PfxData -FilePath $pfxPath -Password $securePassword", step)
             self.assertIn("Import-Certificate -FilePath $cerPath", step)
             self.assertIn("Join-Path $env:RUNNER_TEMP", step)
-            self.assertIn('$cert.Subject -ne "CN=MendHands"', step)
+            self.assertIn('$cert.Subject -ne "CN=RustDesk"', step)
             self.assertIn("$signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint", step)
             self.assertIn("/tr $timestampUrl /td SHA256", step)
             self.assertIn("$signature.TimeStamperCertificate", step)
@@ -168,12 +250,17 @@ class SparseMsixManifestTests(unittest.TestCase):
             self.assertNotIn("Sort-Object Name -Descending | Select-Object -First 1", step)
             self.assertIn("- name: Sign Windows payload with identity certificate", workflow)
             self.assertIn("- name: Sign Windows release files with identity certificate", workflow)
-            self.assertIn('-Paths @("SignOutput") -ReplaceExisting', workflow)
+            self.assertIn('-Paths @("SignOutput") -ReplaceExisting -KeepTrust', workflow)
             self.assertIn("- name: Verify Windows release signatures", workflow)
             self.assertIn("sign_windows_files.ps1", workflow)
             self.assertIn("WINDOWS_IDENTITY_PFX_BASE64", workflow)
             self.assertIn("$signature.TimeStamperCertificate", workflow)
-            self.assertIn('$signature.SignerCertificate.Subject -ne "CN=MendHands"', workflow)
+            self.assertIn("$signature.Status -ne \"Valid\"", workflow)
+            self.assertIn("$signature.SignerCertificate.Thumbprint -ne $expectedThumbprint", workflow)
+            self.assertIn("Expected fallback signer thumbprint is missing", workflow)
+            cleanup = workflow.split("- name: Clean Windows release signing material", 1)[1].split("- name:", 1)[0]
+            self.assertNotIn("continue-on-error: true", cleanup)
+            self.assertIn('throw "Windows release signing material cleanup was incomplete"', cleanup)
             self.assertLess(
                 workflow.index("- name: Verify Windows release signatures"),
                 workflow.index("- name: Publish Release"),

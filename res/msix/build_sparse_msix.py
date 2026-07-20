@@ -6,12 +6,12 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
-PACKAGE_NAME = "MendHands.RustDesk"
-PUBLISHER = "CN=MendHands"
+PACKAGE_NAME = "RustDesk.WebIdentity"
+PUBLISHER = "CN=RustDesk"
 APPLICATION_ID = "RustDesk"
 EXECUTABLE_NAME = "RustDesk.exe"
-DISPLAY_NAME = "MendHands RustDesk"
-PUBLISHER_DISPLAY_NAME = "MendHands"
+DISPLAY_NAME = "RustDesk"
+PUBLISHER_DISPLAY_NAME = "RustDesk"
 MIN_WINDOWS_VERSION = "10.0.19041.0"
 MAX_TESTED_WINDOWS_VERSION = "10.0.26100.0"
 
@@ -120,7 +120,7 @@ def render_manifest(version: str, web_host: str, executable: str = EXECUTABLE_NA
         "VisualElements",
         AppListEntry="none",
         DisplayName=DISPLAY_NAME,
-        Description="MendHands RustDesk",
+        Description="RustDesk",
         BackgroundColor="transparent",
         Square150x150Logo="Assets\\Square150x150Logo.png",
         Square44x44Logo="Assets\\Square44x44Logo.png",
@@ -142,7 +142,7 @@ def render_manifest(version: str, web_host: str, executable: str = EXECUTABLE_NA
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate the MendHands sparse MSIX manifest")
+    parser = argparse.ArgumentParser(description="Generate the RustDesk sparse MSIX manifest")
     parser.add_argument("--version", required=True)
     parser.add_argument("--web-host", required=True)
     parser.add_argument("--executable", default=EXECUTABLE_NAME)

@@ -7,7 +7,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$RequestId,
 
-    [string]$PackageName = "MendHands.RustDesk",
+    [string]$PackageName = "RustDesk.WebIdentity",
     [string]$PackagePath,
     [string]$CertificatePath,
     [string]$ExternalLocation,
@@ -243,7 +243,7 @@ function Invoke-IdentityAction {
     }
 }
 
-$mutex = [System.Threading.Mutex]::new($false, "MendHands.RustDesk.SparseIdentity")
+$mutex = [System.Threading.Mutex]::new($false, "RustDesk.WebIdentity.Operation")
 $hasLock = $false
 try {
     try {

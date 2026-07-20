@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity version="0.0.0.0" name="MendHands.RustDesk"/>
+  <assemblyIdentity version="0.0.0.0" name="RustDesk.WebIdentity"/>
   <msix xmlns="urn:schemas-microsoft-com:msix.v1"
-        publisher="CN=MendHands"
-        packageName="MendHands.RustDesk"
+        publisher="CN=RustDesk"
+        packageName="RustDesk.WebIdentity"
         applicationId="RustDesk"/>
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>

@@ -6,6 +6,8 @@ import time
 import argparse
 import logging
 import shutil
+import struct
+import subprocess
 import zipfile
 
 logging.basicConfig(
@@ -196,24 +198,86 @@ SIGN_EXTENSIONS = [
     ".ps1",
     ".psm1",
 ]
+PE_EXTENSIONS = {".dll", ".exe", ".sys", ".vxd"}
+
+
+def has_embedded_pe_signature(file_path):
+    try:
+        with open(file_path, "rb") as f:
+            if f.read(2) != b"MZ":
+                return False
+            f.seek(0x3C)
+            pe_offset = struct.unpack("<I", f.read(4))[0]
+            f.seek(pe_offset)
+            if f.read(4) != b"PE\0\0":
+                return False
+            f.seek(pe_offset + 24)
+            magic = struct.unpack("<H", f.read(2))[0]
+            if magic not in (0x10B, 0x20B):
+                return False
+            data_directories_offset = pe_offset + 24 + (112 if magic == 0x20B else 96)
+            f.seek(data_directories_offset + 32)
+            certificate_offset, certificate_size = struct.unpack("<II", f.read(8))
+            if certificate_offset == 0 or certificate_size < 8:
+                return False
+            f.seek(0, os.SEEK_END)
+            if certificate_offset + certificate_size > f.tell():
+                return False
+            f.seek(certificate_offset)
+            certificate_length, revision, certificate_type = struct.unpack("<IHH", f.read(8))
+            return (
+                8 <= certificate_length <= certificate_size
+                and revision in (0x0100, 0x0200)
+                and certificate_type == 0x0002
+            )
+    except (OSError, struct.error):
+        return False
+
+
+def has_valid_pe_signature(file_path):
+    if not has_embedded_pe_signature(file_path):
+        return False
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if not powershell:
+        logging.warning("Cannot validate existing Authenticode signature: PowerShell is unavailable")
+        return False
+    env = os.environ.copy()
+    env["RUSTDESK_SIGNATURE_PATH"] = os.path.abspath(file_path)
+    command = (
+        "$signature = Get-AuthenticodeSignature -LiteralPath $env:RUSTDESK_SIGNATURE_PATH; "
+        "if ($signature.SignerCertificate -and $signature.Status -in @('Valid', 'NotTrusted')) { exit 0 }; exit 1"
+    )
+    try:
+        result = subprocess.run(
+            [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=30,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def sign_files(dir_path, only_ext=None):
     if only_ext:
-        only_ext = only_ext.split(",")
-        for i in range(len(only_ext)):
-            if not only_ext[i].startswith("."):
-                only_ext[i] = "." + only_ext[i]
+        only_ext = [ext.lower() for ext in only_ext.split(",")]
+        only_ext = [ext if ext.startswith(".") else "." + ext for ext in only_ext]
     for root, dirs, files in os.walk(dir_path):
         for file in files:
             file_path = os.path.join(root, file)
             _, ext = os.path.splitext(file_path)
+            ext = ext.lower()
             if only_ext and ext not in only_ext:
                 continue
             if ext in SIGN_EXTENSIONS:
+                if ext in PE_EXTENSIONS and has_valid_pe_signature(file_path):
+                    logging.info(f"Preserving existing signature on {file_path}")
+                    continue
                 if not sign_one_file(file_path):
-                    logging.error(f"Failed to sign {file_path}")
-                    break
+                    raise RuntimeError(f"Failed to sign {file_path}")
 
 
 def main():

@@ -14,18 +14,22 @@ encoding = 'utf-8'
 # output: {path: (compressed_data, file_md5)}
 
 
-def generate_md5_table(folder: str, level) -> dict:
+def generate_md5_table(folder: str, level, exclude_names=None) -> dict:
     res: dict = dict()
-    curdir = os.curdir
+    exclude_names = {name.lower() for name in (exclude_names or [])}
+    curdir = os.getcwd()
     os.chdir(folder)
     for root, _, files in os.walk('.'):
         # remove ./
         for f in files:
+            if f.lower() in exclude_names:
+                print(f"Excluding {os.path.join(root, f)}...")
+                continue
             md5_generator = md5()
             full_path = os.path.join(root, f)
             print(f"Processing {full_path}...")
-            f = open(full_path, "rb")
-            content = f.read()
+            with open(full_path, "rb") as input_file:
+                content = input_file.read()
             content_compressed = brotli.compress(
                 content, quality=level)
             md5_generator.update(content)
@@ -87,6 +91,8 @@ if __name__ == '__main__':
                       help="the target used by cargo")
     parser.add_option("-l", "--level", dest="level", type="int",
                       help="compression level, default is 11, highest", default=11)
+    parser.add_option("--exclude", dest="exclude_names", action="append", default=[],
+                      help="exclude a file name from the portable payload; repeatable")
     (options, args) = parser.parse_args()
     folder = options.folder or './rustdesk'
     output_folder = os.path.abspath(options.output_folder or './')
@@ -102,7 +108,7 @@ if __name__ == '__main__':
     exe = '.' + exe[len(os.path.abspath(folder)):]
     print("Executable path: " + exe)
     print("Compression level: " + str(options.level))
-    md5_table = generate_md5_table(folder, options.level)
+    md5_table = generate_md5_table(folder, options.level, options.exclude_names)
     write_package_metadata(md5_table, output_folder, exe)
     write_app_metadata(output_folder)
     build_portable(output_folder, options.target)

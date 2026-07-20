@@ -17,8 +17,8 @@ g_indent_unit = "\t"
 g_version = ""
 g_build_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 g_excluded_payloads = {
-    "mendhands-rustdesk-identity.msix",
-    "mendhands-rustdesk-identity.cer",
+    "rustdesk-web-identity.msix",
+    "rustdesk-web-identity.cer",
 }
 
 # Replace the following links with your own in the custom arp properties.

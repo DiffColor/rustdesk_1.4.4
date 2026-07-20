@@ -2,7 +2,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string[]]$Paths,
 
-    [switch]$ReplaceExisting
+    [switch]$ReplaceExisting,
+
+    [switch]$KeepTrust
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,20 +38,23 @@ if ($files.Count -eq 0) {
     throw "No Windows files were found to sign"
 }
 
-$prefix = "mendhands-release-signing-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+$prefix = "rustdesk-release-signing-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
 $pfxPath = Join-Path $env:RUNNER_TEMP "$prefix.pfx"
 $cerPath = Join-Path $env:RUNNER_TEMP "$prefix.cer"
 $certMarker = Join-Path $env:RUNNER_TEMP "$prefix.thumbprint"
+$expectedSignerMarker = Join-Path $env:RUNNER_TEMP "$prefix.expected-thumbprint"
 $cert = $null
 $trustedByStep = $false
+$succeeded = $false
 
 try {
     [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_IDENTITY_PFX_BASE64))
     $securePassword = ConvertTo-SecureString $env:WINDOWS_IDENTITY_PFX_PASSWORD -AsPlainText -Force
     $cert = (Get-PfxData -FilePath $pfxPath -Password $securePassword).EndEntityCertificates | Select-Object -First 1
-    if (-not $cert -or $cert.Subject -ne "CN=MendHands") {
+    if (-not $cert -or $cert.Subject -ne "CN=RustDesk") {
         throw "Windows signing certificate publisher mismatch"
     }
+    Set-Content -LiteralPath $expectedSignerMarker -Value $cert.Thumbprint
     Export-Certificate -Cert $cert -FilePath $cerPath | Out-Null
     if (-not (Test-Path "Cert:\CurrentUser\TrustedPeople\$($cert.Thumbprint)")) {
         $trustedByStep = $true
@@ -60,7 +65,7 @@ try {
     foreach ($file in $files) {
         $existingSignature = Get-AuthenticodeSignature $file.FullName
         if ($existingSignature.SignerCertificate -and -not $ReplaceExisting) {
-            if ($existingSignature.Status -in @("HashMismatch", "NotSigned", "UnknownError", "NotSupported")) {
+            if ($existingSignature.Status -notin @("Valid", "NotTrusted")) {
                 throw "Existing signature is invalid: $($file.FullName) [$($existingSignature.Status)]"
             }
             Write-Host "Preserved existing signature on $($file.Name): $($existingSignature.SignerCertificate.Subject)"
@@ -90,15 +95,25 @@ try {
         }
         Write-Host "Signed $($file.Name) with $($cert.Subject) [$($cert.Thumbprint)]"
     }
+    $succeeded = $true
 } finally {
-    if ($trustedByStep -and $cert) {
+    $preserveTrust = $KeepTrust -and $succeeded
+    if ($trustedByStep -and $cert -and -not $preserveTrust) {
         Remove-Item "Cert:\CurrentUser\TrustedPeople\$($cert.Thumbprint)" -Force -ErrorAction SilentlyContinue
         if (-not (Test-Path "Cert:\CurrentUser\TrustedPeople\$($cert.Thumbprint)")) {
             Remove-Item $certMarker -Force -ErrorAction SilentlyContinue
         }
     }
+    if (-not $preserveTrust) {
+        Remove-Item $expectedSignerMarker -Force -ErrorAction SilentlyContinue
+    }
     Remove-Item $pfxPath, $cerPath -Force -ErrorAction SilentlyContinue
-    if (Test-Path $pfxPath) {
-        throw "Windows signing private key cleanup was incomplete"
+    $residue = @(@($pfxPath, $cerPath) | Where-Object { Test-Path $_ })
+    if (-not $preserveTrust) {
+        $residue += @(@($certMarker, $expectedSignerMarker) | Where-Object { Test-Path $_ })
+    }
+    if ($residue.Count -ne 0) { throw "Windows signing temporary-file cleanup was incomplete: $($residue -join ', ')" }
+    if ($trustedByStep -and -not $preserveTrust -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$($cert.Thumbprint)")) {
+        throw "Windows signing trust cleanup was incomplete"
     }
 }

@@ -1306,10 +1306,10 @@ pub fn copy_exe_cmd(src_exe: &str, exe: &str, path: &str) -> ResultType<String> 
     ))
 }
 
-const SPARSE_IDENTITY_PACKAGE: &str = "mendhands-rustdesk-identity.msix";
-const SPARSE_IDENTITY_CERTIFICATE: &str = "mendhands-rustdesk-identity.cer";
+const SPARSE_IDENTITY_PACKAGE: &str = "rustdesk-web-identity.msix";
+const SPARSE_IDENTITY_CERTIFICATE: &str = "rustdesk-web-identity.cer";
 const SPARSE_IDENTITY_SCRIPT: &str = include_str!("../../res/msix/manage_sparse_identity.ps1");
-const SPARSE_IDENTITY_STATE_DIR: &str = "MendHands\\rustdesk-sparse-identity";
+const SPARSE_IDENTITY_STATE_DIR: &str = "RustDesk\\web-identity";
 
 pub fn manage_sparse_identity(action: &str) -> ResultType<()> {
     use hbb_common::base64::{engine::general_purpose::STANDARD, Engine as _};
