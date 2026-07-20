@@ -530,10 +530,11 @@ jobs:
             $env:EXPECTED_REMOTE_SIGNER_THUMBPRINT
           }
           if (-not $expectedThumbprint) { throw "Expected Windows release signer thumbprint is not configured" }
+          $allowedStatuses = if ($env:SIGN_BASE_URL -eq "") { @("Valid", "NotTrusted") } else { @("Valid") }
           foreach ($name in $expectedNames) {
             $file = Get-Item (Join-Path SignOutput $name) -ErrorAction Stop
             $signature = Get-AuthenticodeSignature $file.FullName
-            if ($signature.Status -ne "Valid" -or -not $signature.SignerCertificate -or -not $signature.TimeStamperCertificate) {
+            if ($signature.Status -notin $allowedStatuses -or -not $signature.SignerCertificate -or -not $signature.TimeStamperCertificate) {
               throw "Invalid or missing Authenticode signature: $($file.FullName) [$($signature.Status)]"
             }
             if ($signature.SignerCertificate.Thumbprint -ne $expectedThumbprint) { throw "Unexpected Windows release signer: $($file.FullName)" }
@@ -549,20 +550,17 @@ jobs:
           $pfxPath = Join-Path $env:RUNNER_TEMP "$prefix.pfx"
           $cerPath = Join-Path $env:RUNNER_TEMP "$prefix.cer"
           $certMarker = Join-Path $env:RUNNER_TEMP "$prefix.thumbprint"
-          $rootCertMarker = Join-Path $env:RUNNER_TEMP "$prefix.root-thumbprint"
           $expectedSignerMarker = Join-Path $env:RUNNER_TEMP "$prefix.expected-thumbprint"
           $sparsePrefix = "rustdesk-web-identity-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           $sparsePfxPath = Join-Path $env:RUNNER_TEMP "$sparsePrefix.pfx"
           $sparseCerPath = Join-Path $env:RUNNER_TEMP "$sparsePrefix.cer"
           $sparseCertMarker = Join-Path $env:RUNNER_TEMP "$sparsePrefix.thumbprint"
           $thumbprint = if (Test-Path $certMarker) { (Get-Content $certMarker -Raw).Trim() } elseif (Test-Path $sparseCertMarker) { (Get-Content $sparseCertMarker -Raw).Trim() } else { $null }
-          $rootThumbprint = if (Test-Path $rootCertMarker) { (Get-Content $rootCertMarker -Raw).Trim() } else { $null }
           if ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item "Cert:\CurrentUser\TrustedPeople\$thumbprint" -Force }
-          if ($rootThumbprint -and (Test-Path "Cert:\CurrentUser\Root\$rootThumbprint")) { Remove-Item "Cert:\CurrentUser\Root\$rootThumbprint" -Force }
-          $temporaryFiles = @($pfxPath, $cerPath, $certMarker, $rootCertMarker, $expectedSignerMarker, $sparsePfxPath, $sparseCerPath, $sparseCertMarker)
+          $temporaryFiles = @($pfxPath, $cerPath, $certMarker, $expectedSignerMarker, $sparsePfxPath, $sparseCerPath, $sparseCertMarker)
           Remove-Item $temporaryFiles -Force -ErrorAction SilentlyContinue
           $residue = @($temporaryFiles | Where-Object { Test-Path $_ })
-          if ($residue.Count -ne 0 -or ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) -or ($rootThumbprint -and (Test-Path "Cert:\CurrentUser\Root\$rootThumbprint"))) { throw "Windows release signing material cleanup was incomplete" }
+          if ($residue.Count -ne 0 -or ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint"))) { throw "Windows release signing material cleanup was incomplete" }
 
       - name: Publish Release
         uses: softprops/action-gh-release@v2
@@ -571,5 +569,7 @@ jobs:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
-            ./SignOutput/rustdesk-*.msi
-            ./SignOutput/rustdesk-*.exe
+            ./SignOutput/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.exe
+            ./SignOutput/rustdesk-host-turtlelab-${{ env.VERSION }}-${{ matrix.job.arch }}.exe
+            ./SignOutput/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
+            ./SignOutput/rustdesk-host-turtlelab-${{ env.VERSION }}-${{ matrix.job.arch }}.msi

@@ -42,11 +42,9 @@ $prefix = "rustdesk-release-signing-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
 $pfxPath = Join-Path $env:RUNNER_TEMP "$prefix.pfx"
 $cerPath = Join-Path $env:RUNNER_TEMP "$prefix.cer"
 $certMarker = Join-Path $env:RUNNER_TEMP "$prefix.thumbprint"
-$rootCertMarker = Join-Path $env:RUNNER_TEMP "$prefix.root-thumbprint"
 $expectedSignerMarker = Join-Path $env:RUNNER_TEMP "$prefix.expected-thumbprint"
 $cert = $null
 $trustedByStep = $false
-$rootTrustedByStep = $false
 $succeeded = $false
 
 try {
@@ -63,12 +61,6 @@ try {
         Set-Content -LiteralPath $certMarker -Value $cert.Thumbprint
         Import-Certificate -FilePath $cerPath -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
     }
-    if (-not (Test-Path "Cert:\CurrentUser\Root\$($cert.Thumbprint)")) {
-        $rootTrustedByStep = $true
-        Set-Content -LiteralPath $rootCertMarker -Value $cert.Thumbprint
-        Import-Certificate -FilePath $cerPath -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
-    }
-
     foreach ($file in $files) {
         $existingSignature = Get-AuthenticodeSignature $file.FullName
         if ($existingSignature.SignerCertificate -and -not $ReplaceExisting) {
@@ -89,16 +81,30 @@ try {
         if (-not $signed) {
             throw "Signing failed: $($file.FullName)"
         }
-        & $signtool verify /pa /all /v $file.FullName
-        if ($LASTEXITCODE -ne 0) {
-            throw "Signature verification failed: $($file.FullName)"
-        }
+        $verifyOutput = (& $signtool verify /pa /all /v $file.FullName 2>&1 | Out-String)
+        $verifyExitCode = $LASTEXITCODE
+        Write-Host $verifyOutput
         $signature = Get-AuthenticodeSignature $file.FullName
-        if ($signature.Status -ne "Valid" -or
+        if ($signature.Status -notin @("Valid", "NotTrusted") -or
             -not $signature.SignerCertificate -or
             $signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint -or
             -not $signature.TimeStamperCertificate) {
             throw "Signature identity or timestamp verification failed: $($file.FullName)"
+        }
+        if ([regex]::Matches($verifyOutput, '(?m)^\s*Signature Index:').Count -ne 1) {
+            throw "Unexpected Authenticode signature count: $($file.FullName)"
+        }
+        if ($verifyExitCode -ne 0 -and $verifyOutput -notmatch '(?s)A certificate chain processed, but terminated in a root.*certificate which is not trusted by the trust provider') {
+            throw "Unexpected SignTool verification failure: $($file.FullName)"
+        }
+        $timestampChain = [Security.Cryptography.X509Certificates.X509Chain]::new()
+        try {
+            $timestampChain.ChainPolicy.RevocationMode = [Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+            if (-not $timestampChain.Build($signature.TimeStamperCertificate)) {
+                throw "Timestamp certificate chain verification failed: $($file.FullName)"
+            }
+        } finally {
+            $timestampChain.Dispose()
         }
         Write-Host "Signed $($file.Name) with $($cert.Subject) [$($cert.Thumbprint)]"
     }
@@ -111,25 +117,16 @@ try {
             Remove-Item $certMarker -Force -ErrorAction SilentlyContinue
         }
     }
-    if ($rootTrustedByStep -and $cert -and -not $preserveTrust) {
-        Remove-Item "Cert:\CurrentUser\Root\$($cert.Thumbprint)" -Force -ErrorAction SilentlyContinue
-        if (-not (Test-Path "Cert:\CurrentUser\Root\$($cert.Thumbprint)")) {
-            Remove-Item $rootCertMarker -Force -ErrorAction SilentlyContinue
-        }
-    }
     if (-not $preserveTrust) {
         Remove-Item $expectedSignerMarker -Force -ErrorAction SilentlyContinue
     }
     Remove-Item $pfxPath, $cerPath -Force -ErrorAction SilentlyContinue
     $residue = @(@($pfxPath, $cerPath) | Where-Object { Test-Path $_ })
     if (-not $preserveTrust) {
-        $residue += @(@($certMarker, $rootCertMarker, $expectedSignerMarker) | Where-Object { Test-Path $_ })
+        $residue += @(@($certMarker, $expectedSignerMarker) | Where-Object { Test-Path $_ })
     }
     if ($residue.Count -ne 0) { throw "Windows signing temporary-file cleanup was incomplete: $($residue -join ', ')" }
     if ($trustedByStep -and -not $preserveTrust -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$($cert.Thumbprint)")) {
         throw "Windows signing trust cleanup was incomplete"
-    }
-    if ($rootTrustedByStep -and -not $preserveTrust -and (Test-Path "Cert:\CurrentUser\Root\$($cert.Thumbprint)")) {
-        throw "Windows signing root trust cleanup was incomplete"
     }
 }
