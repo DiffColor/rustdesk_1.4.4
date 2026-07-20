@@ -325,7 +325,10 @@ jobs:
           $cert = $null; $trustedByStep = $false; $succeeded = $false
           $builds = @(@{Dir="rustdesk";Exe="rustdesk.exe"}, @{Dir="rustdesk-host";Exe="rustdesk.exe"})
           try {
-            $sdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+            $sdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Directory |
+              Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' -and (Test-Path (Join-Path $_.FullName "x64\makeappx.exe")) -and (Test-Path (Join-Path $_.FullName "x64\signtool.exe")) } |
+              Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+            if (-not $sdk) { throw "Windows SDK MakeAppx and SignTool were not found" }
             $makeappx = Join-Path $sdk.FullName "x64\makeappx.exe"; $signtool = Join-Path $sdk.FullName "x64\signtool.exe"
             [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:IDENTITY_PFX_BASE64))
             $securePassword = ConvertTo-SecureString $env:IDENTITY_PFX_PASSWORD -AsPlainText -Force
@@ -342,10 +345,15 @@ jobs:
               python res/msix/build_sparse_msix.py --version $env:TAG_NAME --web-host mendhands.pages.dev --executable $build.Exe --output identity-stage\AppxManifest.xml
               Copy-Item res\icon.png identity-stage\Assets\storelogo.png; Copy-Item res\icon.png identity-stage\Assets\Square150x150Logo.png; Copy-Item res\icon.png identity-stage\Assets\Square44x44Logo.png
               & $makeappx pack /o /d identity-stage /nv /p "$($build.Dir)\mendhands-rustdesk-identity.msix"; if ($LASTEXITCODE) { throw "MakeAppx failed" }
-              & $signtool sign /fd SHA256 /f $pfxPath /p $env:IDENTITY_PFX_PASSWORD "$($build.Dir)\mendhands-rustdesk-identity.msix"; if ($LASTEXITCODE) { throw "MSIX signing failed" }
+              $signed = $false
+              foreach ($timestampUrl in @("http://timestamp.digicert.com", "http://timestamp.sectigo.com")) {
+                & $signtool sign /fd SHA256 /tr $timestampUrl /td SHA256 /f $pfxPath /p $env:IDENTITY_PFX_PASSWORD "$($build.Dir)\mendhands-rustdesk-identity.msix"
+                if ($LASTEXITCODE -eq 0) { $signed = $true; break }
+              }
+              if (-not $signed) { throw "MSIX signing failed" }
               & $signtool verify /pa /v "$($build.Dir)\mendhands-rustdesk-identity.msix"; if ($LASTEXITCODE) { throw "MSIX verification failed" }
               $signature = Get-AuthenticodeSignature "$($build.Dir)\mendhands-rustdesk-identity.msix"
-              if (-not $signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint) { throw "MSIX signer certificate mismatch" }
+              if (-not $signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint -or -not $signature.TimeStamperCertificate) { throw "MSIX signer certificate or timestamp mismatch" }
             }
             Copy-Item $cerPath rustdesk\mendhands-rustdesk-identity.cer; Copy-Item $cerPath rustdesk-host\mendhands-rustdesk-identity.cer
             Set-Content identity-build-complete ok
@@ -378,6 +386,15 @@ jobs:
           if (-not $thumbprint -or -not (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item $certMarker -Force -ErrorAction SilentlyContinue }
           Remove-Item identity-build-complete -Force -ErrorAction SilentlyContinue
           if ((Test-Path $pfxPath) -or ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint"))) { Write-Warning "Sparse MSIX signing material cleanup was incomplete" }
+
+      - name: Sign Windows payload with identity certificate
+        if: env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL == ''
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          WINDOWS_IDENTITY_PFX_BASE64: ${{ secrets.WINDOWS_IDENTITY_PFX_BASE64 }}
+          WINDOWS_IDENTITY_PFX_PASSWORD: ${{ secrets.WINDOWS_IDENTITY_PFX_PASSWORD }}
+        run: '& .\res\msix\sign_windows_files.ps1 -Paths @("rustdesk", "rustdesk-host")'
 
       - name: Build self-extracted executable
         shell: bash
@@ -461,11 +478,51 @@ jobs:
           }
           Get-ChildItem ./SignOutput/rustdesk-*.msi | Get-FileHash -Algorithm SHA256
 
-      - name: Sign rustdesk self-extracted file
+      - name: Sign Windows release files with remote service
         if: env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL != ''
         shell: bash
         run: |
           BASE_URL=${{ secrets.SIGN_BASE_URL }} SECRET_KEY=${{ secrets.SIGN_SECRET_KEY }} python3 res/job.py sign_files ./SignOutput
+
+      - name: Sign Windows release files with identity certificate
+        if: env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL == ''
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          WINDOWS_IDENTITY_PFX_BASE64: ${{ secrets.WINDOWS_IDENTITY_PFX_BASE64 }}
+          WINDOWS_IDENTITY_PFX_PASSWORD: ${{ secrets.WINDOWS_IDENTITY_PFX_PASSWORD }}
+        run: '& .\res\msix\sign_windows_files.ps1 -Paths @("SignOutput") -ReplaceExisting'
+
+      - name: Verify Windows release signatures
+        if: env.UPLOAD_ARTIFACT == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = @(Get-ChildItem SignOutput -File | Where-Object { @(".exe", ".msi") -contains $_.Extension.ToLowerInvariant() })
+          if ($files.Count -eq 0) { throw "No Windows release files were found to verify" }
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature $file.FullName
+            if (-not $signature.SignerCertificate -or $signature.Status -in @("NotSigned", "HashMismatch", "UnknownError", "NotSupported") -or -not $signature.TimeStamperCertificate) {
+              throw "Invalid or missing Authenticode signature: $($file.FullName) [$($signature.Status)]"
+            }
+            if ($env:SIGN_BASE_URL -eq "" -and $signature.SignerCertificate.Subject -ne "CN=MendHands") { throw "Unexpected Windows release signer: $($file.FullName)" }
+            Write-Host "Verified $($file.Name): $($signature.SignerCertificate.Subject) [$($signature.Status)]"
+          }
+
+      - name: Clean Windows release signing material
+        if: always() && env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL == ''
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $prefix = "mendhands-release-signing-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $pfxPath = Join-Path $env:RUNNER_TEMP "$prefix.pfx"
+          $cerPath = Join-Path $env:RUNNER_TEMP "$prefix.cer"
+          $certMarker = Join-Path $env:RUNNER_TEMP "$prefix.thumbprint"
+          $thumbprint = if (Test-Path $certMarker) { (Get-Content $certMarker -Raw).Trim() } else { $null }
+          if ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item "Cert:\CurrentUser\TrustedPeople\$thumbprint" -Force -ErrorAction SilentlyContinue }
+          Remove-Item $pfxPath, $cerPath -Force -ErrorAction SilentlyContinue
+          if (-not $thumbprint -or -not (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item $certMarker -Force -ErrorAction SilentlyContinue }
+          if ((Test-Path $pfxPath) -or ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint"))) { Write-Warning "Windows release signing material cleanup was incomplete" }
 
       - name: Publish Release
         uses: softprops/action-gh-release@v2

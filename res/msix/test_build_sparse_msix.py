@@ -94,6 +94,7 @@ class SparseMsixManifestTests(unittest.TestCase):
         windows = (REPO_ROOT / "src/platform/windows.rs").read_text()
         msi = (REPO_ROOT / "res/msi/Package/Components/RustDesk.wxs").read_text()
         msi_preprocess = (REPO_ROOT / "res/msi/preprocess.py").read_text()
+        signing = (Path(__file__).with_name("sign_windows_files.ps1")).read_text()
 
         self.assertNotIn("-ForceApplicationShutdown", powershell)
         install_branch = powershell.split('if ($Action -eq "Install")', 1)[1].split(
@@ -132,6 +133,14 @@ class SparseMsixManifestTests(unittest.TestCase):
         )
         self.assertNotIn("FromBase64String('{script}')", windows)
         self.assertIn("encoded_command.len() > 30_000", windows)
+        self.assertIn('@(".dll", ".exe", ".msi")', signing)
+        self.assertNotIn('".sys"', signing)
+        self.assertIn("/tr $timestampUrl /td SHA256", signing)
+        self.assertIn("$signature.Status -ne \"Valid\"", signing)
+        self.assertIn("$signature.TimeStamperCertificate", signing)
+        self.assertIn("Windows signing private key cleanup was incomplete", signing)
+        self.assertIn("Preserved existing signature", signing)
+        self.assertIn("Existing signature is invalid", signing)
 
         for workflow_name in ("flutter-build.yml", "flutter-build-windows.yml"):
             workflow = (REPO_ROOT / ".github/workflows" / workflow_name).read_text()
@@ -146,6 +155,8 @@ class SparseMsixManifestTests(unittest.TestCase):
             self.assertIn("Join-Path $env:RUNNER_TEMP", step)
             self.assertIn('$cert.Subject -ne "CN=MendHands"', step)
             self.assertIn("$signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint", step)
+            self.assertIn("/tr $timestampUrl /td SHA256", step)
+            self.assertIn("$signature.TimeStamperCertificate", step)
             self.assertIn("try {", step)
             self.assertIn("} finally {", step)
             self.assertIn('if (-not $succeeded)', step)
@@ -153,6 +164,20 @@ class SparseMsixManifestTests(unittest.TestCase):
             self.assertIn("- name: Clean sparse MSIX signing material", step)
             self.assertIn("if: always()", step)
             self.assertIn("identity-build-complete", step)
+            self.assertIn("Where-Object { $_.Name -match '^\\d+\\.\\d+\\.\\d+\\.\\d+$'", step)
+            self.assertNotIn("Sort-Object Name -Descending | Select-Object -First 1", step)
+            self.assertIn("- name: Sign Windows payload with identity certificate", workflow)
+            self.assertIn("- name: Sign Windows release files with identity certificate", workflow)
+            self.assertIn('-Paths @("SignOutput") -ReplaceExisting', workflow)
+            self.assertIn("- name: Verify Windows release signatures", workflow)
+            self.assertIn("sign_windows_files.ps1", workflow)
+            self.assertIn("WINDOWS_IDENTITY_PFX_BASE64", workflow)
+            self.assertIn("$signature.TimeStamperCertificate", workflow)
+            self.assertIn('$signature.SignerCertificate.Subject -ne "CN=MendHands"', workflow)
+            self.assertLess(
+                workflow.index("- name: Verify Windows release signatures"),
+                workflow.index("- name: Publish Release"),
+            )
 
 
 if __name__ == "__main__":
