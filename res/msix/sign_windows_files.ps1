@@ -97,7 +97,7 @@ try {
         if ($verifyOutput -notmatch '(?m)^\s*The signature is timestamped:' -or $verifyOutput -notmatch '(?m)^\s*Timestamp Verified by:') {
             throw "RFC3161 timestamp verification failed: $($file.FullName)"
         }
-        $verifyLines = @($verifyOutput -split '\r?\n')
+        $verifyLines = @(($verifyOutput -split '\r?\n') | Where-Object { $_ -notmatch '^\s*$' })
         $rootErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*SignTool Error: A certificate chain processed, but terminated in a root\s*$') { $i } })
         $providerErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*certificate which is not trusted by the trust provider\.\s*$') { $i } })
         $signToolErrors = @($verifyLines | Where-Object { $_ -match '^\s*SignTool Error:' })

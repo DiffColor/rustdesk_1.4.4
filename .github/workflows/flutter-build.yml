@@ -372,7 +372,7 @@ jobs:
               if (-not $signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint) { throw "MSIX signer certificate mismatch [$($signature.Status)]" }
               if ([regex]::Matches($verifyOutput, '(?m)^\s*Signature Index:').Count -ne 1) { throw "Unexpected MSIX signature count" }
               if ($verifyOutput -notmatch '(?m)^\s*The signature is timestamped:' -or $verifyOutput -notmatch '(?m)^\s*Timestamp Verified by:') { throw "MSIX RFC3161 timestamp verification failed" }
-              $verifyLines = @($verifyOutput -split '\r?\n')
+              $verifyLines = @(($verifyOutput -split '\r?\n') | Where-Object { $_ -notmatch '^\s*$' })
               $rootErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*SignTool Error: A certificate chain processed, but terminated in a root\s*$') { $i } })
               $providerErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*certificate which is not trusted by the trust provider\.\s*$') { $i } })
               $signToolErrors = @($verifyLines | Where-Object { $_ -match '^\s*SignTool Error:' })
@@ -577,7 +577,7 @@ jobs:
             if ($signature.SignerCertificate.Thumbprint -ne $expectedThumbprint) { throw "Unexpected Windows release signer: $($file.FullName)" }
             if ([regex]::Matches($verifyOutput, '(?m)^\s*Signature Index:').Count -ne 1) { throw "Unexpected Windows release signature count: $($file.FullName)" }
             if ($verifyOutput -notmatch '(?m)^\s*The signature is timestamped:' -or $verifyOutput -notmatch '(?m)^\s*Timestamp Verified by:') { throw "Windows release RFC3161 timestamp verification failed: $($file.FullName)" }
-            $verifyLines = @($verifyOutput -split '\r?\n')
+            $verifyLines = @(($verifyOutput -split '\r?\n') | Where-Object { $_ -notmatch '^\s*$' })
             $rootErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*SignTool Error: A certificate chain processed, but terminated in a root\s*$') { $i } })
             $providerErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*certificate which is not trusted by the trust provider\.\s*$') { $i } })
             $signToolErrors = @($verifyLines | Where-Object { $_ -match '^\s*SignTool Error:' })
