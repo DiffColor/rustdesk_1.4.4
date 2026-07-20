@@ -105,6 +105,7 @@ class SparseMsixManifestTests(unittest.TestCase):
         self.assertEqual(core.count('#[cfg(windows)]\n                hbb_common::allow_err!(crate::platform::windows::manage_sparse_identity'), 2)
         self.assertIn('get_uninstall(false, false, false)', windows)
         self.assertIn('get_uninstall(kill_self, true, true)', windows)
+        self.assertNotIn("parent().unwrap_or_default()", windows)
         self.assertIn('if unregister_sparse_identity {', windows)
         self.assertIn('.spawn()?', windows)
         self.assertIn('include_str!("../../res/msix/manage_sparse_identity.ps1")', windows)

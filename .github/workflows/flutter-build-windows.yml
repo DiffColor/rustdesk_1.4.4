@@ -371,12 +371,12 @@ jobs:
           $cerPath = Join-Path $env:RUNNER_TEMP "mendhands-identity-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.cer"
           $certMarker = Join-Path $env:RUNNER_TEMP "mendhands-identity-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.thumbprint"
           $thumbprint = if (Test-Path $certMarker) { (Get-Content $certMarker -Raw).Trim() } else { $null }
-          if ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item "Cert:\CurrentUser\TrustedPeople\$thumbprint" -Force -ErrorAction Continue }
-          if (-not (Test-Path identity-build-complete)) { Remove-Item rustdesk\mendhands-rustdesk-identity.*, rustdesk-host\mendhands-rustdesk-identity.* -Force -ErrorAction Continue }
-          Remove-Item identity-stage -Recurse -Force -ErrorAction Continue
-          Remove-Item $pfxPath, $cerPath -Force -ErrorAction Continue
-          if (-not $thumbprint -or -not (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item $certMarker -Force -ErrorAction Continue }
-          Remove-Item identity-build-complete -Force -ErrorAction Continue
+          if ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item "Cert:\CurrentUser\TrustedPeople\$thumbprint" -Force -ErrorAction SilentlyContinue }
+          if (-not (Test-Path identity-build-complete)) { Remove-Item rustdesk\mendhands-rustdesk-identity.*, rustdesk-host\mendhands-rustdesk-identity.* -Force -ErrorAction SilentlyContinue }
+          Remove-Item identity-stage -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item $pfxPath, $cerPath -Force -ErrorAction SilentlyContinue
+          if (-not $thumbprint -or -not (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item $certMarker -Force -ErrorAction SilentlyContinue }
+          Remove-Item identity-build-complete -Force -ErrorAction SilentlyContinue
           if ((Test-Path $pfxPath) -or ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint"))) { Write-Warning "Sparse MSIX signing material cleanup was incomplete" }
 
       - name: Build self-extracted executable

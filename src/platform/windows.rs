@@ -1547,7 +1547,9 @@ if exist \"{tmp_path}\\{app_name} Tray.lnk\" del /f /q \"{tmp_path}\\{app_name} 
         "
     );
     let src_exe = std::env::current_exe()?.to_str().unwrap_or("").to_string();
-    let src_dir = std::path::Path::new(&src_exe).parent().unwrap_or_default();
+    let src_dir = std::path::Path::new(&src_exe)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new(""));
     let identity_files = [SPARSE_IDENTITY_PACKAGE, SPARSE_IDENTITY_CERTIFICATE]
         .iter()
         .map(|name| {
