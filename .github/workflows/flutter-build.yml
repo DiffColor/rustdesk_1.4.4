@@ -553,17 +553,20 @@ jobs:
           $pfxPath = Join-Path $env:RUNNER_TEMP "$prefix.pfx"
           $cerPath = Join-Path $env:RUNNER_TEMP "$prefix.cer"
           $certMarker = Join-Path $env:RUNNER_TEMP "$prefix.thumbprint"
+          $rootCertMarker = Join-Path $env:RUNNER_TEMP "$prefix.root-thumbprint"
           $expectedSignerMarker = Join-Path $env:RUNNER_TEMP "$prefix.expected-thumbprint"
           $sparsePrefix = "rustdesk-web-identity-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           $sparsePfxPath = Join-Path $env:RUNNER_TEMP "$sparsePrefix.pfx"
           $sparseCerPath = Join-Path $env:RUNNER_TEMP "$sparsePrefix.cer"
           $sparseCertMarker = Join-Path $env:RUNNER_TEMP "$sparsePrefix.thumbprint"
           $thumbprint = if (Test-Path $certMarker) { (Get-Content $certMarker -Raw).Trim() } elseif (Test-Path $sparseCertMarker) { (Get-Content $sparseCertMarker -Raw).Trim() } else { $null }
+          $rootThumbprint = if (Test-Path $rootCertMarker) { (Get-Content $rootCertMarker -Raw).Trim() } else { $null }
           if ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item "Cert:\CurrentUser\TrustedPeople\$thumbprint" -Force }
-          $temporaryFiles = @($pfxPath, $cerPath, $certMarker, $expectedSignerMarker, $sparsePfxPath, $sparseCerPath, $sparseCertMarker)
+          if ($rootThumbprint -and (Test-Path "Cert:\CurrentUser\Root\$rootThumbprint")) { Remove-Item "Cert:\CurrentUser\Root\$rootThumbprint" -Force }
+          $temporaryFiles = @($pfxPath, $cerPath, $certMarker, $rootCertMarker, $expectedSignerMarker, $sparsePfxPath, $sparseCerPath, $sparseCertMarker)
           Remove-Item $temporaryFiles -Force -ErrorAction SilentlyContinue
           $residue = @($temporaryFiles | Where-Object { Test-Path $_ })
-          if ($residue.Count -ne 0 -or ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint"))) { throw "Windows release signing material cleanup was incomplete" }
+          if ($residue.Count -ne 0 -or ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) -or ($rootThumbprint -and (Test-Path "Cert:\CurrentUser\Root\$rootThumbprint"))) { throw "Windows release signing material cleanup was incomplete" }
 
       - name: Publish Release
         uses: softprops/action-gh-release@v2

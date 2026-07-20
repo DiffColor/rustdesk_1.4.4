@@ -218,6 +218,8 @@ class SparseMsixManifestTests(unittest.TestCase):
         self.assertIn("$signature.TimeStamperCertificate", signing)
         self.assertIn("Windows signing temporary-file cleanup was incomplete", signing)
         self.assertIn("Windows signing trust cleanup was incomplete", signing)
+        self.assertIn("Windows signing root trust cleanup was incomplete", signing)
+        self.assertIn("Cert:\\CurrentUser\\Root", signing)
         self.assertIn("$expectedSignerMarker", signing)
         self.assertIn("$KeepTrust", signing)
         self.assertIn("Preserved existing signature", signing)
@@ -261,6 +263,8 @@ class SparseMsixManifestTests(unittest.TestCase):
             cleanup = workflow.split("- name: Clean Windows release signing material", 1)[1].split("- name:", 1)[0]
             self.assertNotIn("continue-on-error: true", cleanup)
             self.assertIn('throw "Windows release signing material cleanup was incomplete"', cleanup)
+            self.assertIn("$rootCertMarker", cleanup)
+            self.assertIn("Cert:\\CurrentUser\\Root", cleanup)
             self.assertLess(
                 workflow.index("- name: Verify Windows release signatures"),
                 workflow.index("- name: Publish Release"),
