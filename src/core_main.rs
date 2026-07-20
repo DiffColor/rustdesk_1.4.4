@@ -252,6 +252,14 @@ pub fn core_main() -> Option<Vec<String>> {
                 #[cfg(windows)]
                 hbb_common::allow_err!(crate::platform::windows::uninstall_cert());
                 return None;
+            } else if args[0] == "--register-sparse-identity" {
+                hbb_common::allow_err!(crate::platform::windows::manage_sparse_identity("Install"));
+                return None;
+            } else if args[0] == "--unregister-sparse-identity" {
+                hbb_common::allow_err!(crate::platform::windows::manage_sparse_identity(
+                    "Uninstall"
+                ));
+                return None;
             } else if args[0] == "--install-idd" {
                 #[cfg(windows)]
                 if crate::virtual_display_manager::is_virtual_display_supported() {

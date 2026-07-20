@@ -311,6 +311,37 @@ jobs:
           pip3 install requests argparse
           BASE_URL=${{ secrets.SIGN_BASE_URL }} SECRET_KEY=${{ secrets.SIGN_SECRET_KEY }} python3 res/job.py sign_files ./rustdesk-host/
 
+      - name: Build and sign sparse MSIX identity packages
+        if: env.UPLOAD_ARTIFACT == 'true'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          IDENTITY_PFX_BASE64: ${{ secrets.WINDOWS_IDENTITY_PFX_BASE64 }}
+          IDENTITY_PFX_PASSWORD: ${{ secrets.WINDOWS_IDENTITY_PFX_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not $env:IDENTITY_PFX_BASE64 -or -not $env:IDENTITY_PFX_PASSWORD) { Write-Warning "Sparse MSIX signing secrets are missing; continuing without identity package"; exit 0 }
+          $sdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          $makeappx = Join-Path $sdk.FullName "x64\makeappx.exe"; $signtool = Join-Path $sdk.FullName "x64\signtool.exe"
+          [IO.File]::WriteAllBytes("identity.pfx", [Convert]::FromBase64String($env:IDENTITY_PFX_BASE64))
+          $securePassword = ConvertTo-SecureString $env:IDENTITY_PFX_PASSWORD -AsPlainText -Force
+          $cert = (Get-PfxData -FilePath identity.pfx -Password $securePassword).EndEntityCertificates | Select-Object -First 1
+          Export-Certificate -Cert $cert -FilePath identity.cer | Out-Null
+          Import-Certificate -FilePath identity.cer -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
+          $builds = @(@{Dir="rustdesk";Exe="rustdesk.exe"}, @{Dir="rustdesk-host";Exe="rustdesk.exe"})
+          foreach ($build in $builds) {
+            Remove-Item identity-stage -Recurse -Force -ErrorAction SilentlyContinue; New-Item identity-stage\Assets -ItemType Directory | Out-Null
+            python res/msix/build_sparse_msix.py --version $env:TAG_NAME --web-host mendhands.pages.dev --executable $build.Exe --output identity-stage\AppxManifest.xml
+            Copy-Item res\icon.png identity-stage\Assets\storelogo.png; Copy-Item res\icon.png identity-stage\Assets\Square150x150Logo.png; Copy-Item res\icon.png identity-stage\Assets\Square44x44Logo.png
+            & $makeappx pack /o /d identity-stage /nv /p "$($build.Dir)\mendhands-rustdesk-identity.msix"; if ($LASTEXITCODE) { throw "MakeAppx failed" }
+            & $signtool sign /fd SHA256 /f identity.pfx /p $env:IDENTITY_PFX_PASSWORD "$($build.Dir)\mendhands-rustdesk-identity.msix"; if ($LASTEXITCODE) { throw "MSIX signing failed" }
+            & $signtool verify /pa /v "$($build.Dir)\mendhands-rustdesk-identity.msix"; if ($LASTEXITCODE) { throw "MSIX verification failed" }
+            Copy-Item res\msix\manage_sparse_identity.ps1 $build.Dir
+          }
+          Copy-Item identity.cer rustdesk\mendhands-rustdesk-identity.cer; Copy-Item identity.cer rustdesk-host\mendhands-rustdesk-identity.cer
+          Remove-Item "Cert:\CurrentUser\TrustedPeople\$($cert.Thumbprint)" -Force -ErrorAction SilentlyContinue
+          Remove-Item identity.pfx -Force
+
       - name: Build self-extracted executable
         shell: bash
         if: env.UPLOAD_ARTIFACT == 'true'

@@ -1306,6 +1306,47 @@ pub fn copy_exe_cmd(src_exe: &str, exe: &str, path: &str) -> ResultType<String> 
     ))
 }
 
+const SPARSE_IDENTITY_PACKAGE: &str = "mendhands-rustdesk-identity.msix";
+const SPARSE_IDENTITY_CERTIFICATE: &str = "mendhands-rustdesk-identity.cer";
+const SPARSE_IDENTITY_SCRIPT: &str = "manage_sparse_identity.ps1";
+
+pub fn manage_sparse_identity(action: &str) -> ResultType<()> {
+    let exe = std::env::current_exe()?;
+    let dir = exe
+        .parent()
+        .ok_or(anyhow!("Cannot locate RustDesk directory"))?;
+    let script = dir.join(SPARSE_IDENTITY_SCRIPT);
+    if !script.exists() {
+        log::warn!("Sparse MSIX helper is not present; skipping identity {action}");
+        return Ok(());
+    }
+    let status = std::process::Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(script)
+        .arg("-Action")
+        .arg(action)
+        .arg("-PackagePath")
+        .arg(dir.join(SPARSE_IDENTITY_PACKAGE))
+        .arg("-CertificatePath")
+        .arg(dir.join(SPARSE_IDENTITY_CERTIFICATE))
+        .arg("-ExternalLocation")
+        .arg(dir)
+        .status()?;
+    if !status.success() {
+        bail!("Sparse MSIX identity {action} failed with {status}");
+    }
+    Ok(())
+}
+
 fn get_after_install(
     exe: &str,
     reg_value_start_menu_shortcuts: Option<String>,
@@ -1474,6 +1515,22 @@ if exist \"{tmp_path}\\{app_name} Tray.lnk\" del /f /q \"{tmp_path}\\{app_name} 
         "
     );
     let src_exe = std::env::current_exe()?.to_str().unwrap_or("").to_string();
+    let src_dir = std::path::Path::new(&src_exe).parent().unwrap_or_default();
+    let identity_files = [
+        SPARSE_IDENTITY_PACKAGE,
+        SPARSE_IDENTITY_CERTIFICATE,
+        SPARSE_IDENTITY_SCRIPT,
+    ]
+    .iter()
+    .map(|name| {
+        format!(
+            "if exist \"{}\" copy /Y \"{}\" \"{path}\\{name}\"",
+            src_dir.join(name).display(),
+            src_dir.join(name).display()
+        )
+    })
+    .collect::<Vec<_>>()
+    .join("\n");
 
     // potential bug here: if run_cmd cancelled, but config file is changed.
     if let Some(lic) = get_license() {
@@ -1510,6 +1567,7 @@ copy /Y \"{tmp_path}\\{app_name} Tray.lnk\" \"%PROGRAMDATA%\\Microsoft\\Windows\
 chcp 65001
 md \"{path}\"
 {copy_exe}
+{identity_files}
 reg add {subkey} /f
 reg add {subkey} /f /v DisplayIcon /t REG_SZ /d \"{exe}\"
 reg add {subkey} /f /v DisplayName /t REG_SZ /d \"{app_name}\"
@@ -1532,6 +1590,7 @@ copy /Y \"{tmp_path}\\Uninstall {app_name}.lnk\" \"{path}\\\"
 {dels}
 {import_config}
 {after_install}
+if exist \"{path}\\{identity_script}\" \"{exe}\" --register-sparse-identity
 {install_remote_printer}
 {sleep}
     ",
@@ -1546,6 +1605,8 @@ copy /Y \"{tmp_path}\\Uninstall {app_name}.lnk\" \"{path}\\\"
         sleep = if debug { "timeout 300" } else { "" },
         dels = if debug { "" } else { &dels },
         copy_exe = copy_exe_cmd(&src_exe, &exe, &path)?,
+        identity_files = identity_files,
+        identity_script = SPARSE_IDENTITY_SCRIPT,
         import_config = get_import_config(&exe),
     );
     run_cmds(cmds, debug, "install")?;
@@ -1623,6 +1684,7 @@ fn get_uninstall(kill_self: bool, uninstall_printer: bool) -> String {
     {before_uninstall}
     {uninstall_printer_cmd}
     {uninstall_cert_cmd}
+    if exist \"{path}\\{identity_script}\" \"{path}\\{app_name}.exe\" --unregister-sparse-identity
     reg delete {subkey} /f
     {uninstall_amyuni_idd}
     if exist \"{path}\" rd /s /q \"{path}\"
@@ -1633,6 +1695,7 @@ fn get_uninstall(kill_self: bool, uninstall_printer: bool) -> String {
         before_uninstall=get_before_uninstall(kill_self),
         uninstall_amyuni_idd=get_uninstall_amyuni_idd(),
         app_name = crate::get_app_name(),
+        identity_script = SPARSE_IDENTITY_SCRIPT,
     )
 }
 
