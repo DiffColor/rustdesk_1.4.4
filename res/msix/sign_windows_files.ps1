@@ -146,11 +146,19 @@ try {
         $signToolErrors = @($verifyLines | Where-Object { $_ -match '^\s*SignTool Error:' })
         $signToolWarnings = @($verifyLines | Where-Object { $_ -match '^\s*SignTool Warning:' })
         $verifiedSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of signatures successfully Verified:' })
+        $fileVerifiedSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of files successfully Verified:' })
         $warningSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of warnings:' })
         $errorSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of errors:' })
+        $validVerifiedSummary = if ($trustedThirdPartySignature) {
+            $verifiedSummaries.Count -eq 0 -and $fileVerifiedSummaries.Count -eq 1 -and
+                $fileVerifiedSummaries[0] -match '^\s*Number of files successfully Verified: 1\s*$'
+        } else {
+            $fileVerifiedSummaries.Count -eq 0 -and $verifiedSummaries.Count -eq 1 -and
+                $verifiedSummaries[0] -match '^\s*Number of signatures successfully Verified: 1\s*$'
+        }
         $validSignature = $verifyExitCode -eq 0 -and $signature.Status -eq "Valid" -and
             $signToolErrors.Count -eq 0 -and $signToolWarnings.Count -eq 0 -and
-            $verifiedSummaries.Count -eq 1 -and $verifiedSummaries[0] -match '^\s*Number of signatures successfully Verified: 1\s*$' -and
+            $validVerifiedSummary -and
             $warningSummaries.Count -eq 1 -and $warningSummaries[0] -match '^\s*Number of warnings: 0\s*$' -and
             $errorSummaries.Count -eq 1 -and $errorSummaries[0] -match '^\s*Number of errors: 0\s*$'
         $expectedChainBuildTrustFailure = $verifyExitCode -ne 0 -and

@@ -276,6 +276,8 @@ class SparseMsixManifestTests(unittest.TestCase):
         self.assertIn("$signature.SignerCertificate.Thumbprint -ne $expectedFileSignerThumbprint", signing)
         self.assertIn('if (-not $trustedThirdPartySignature) { $verifyArguments += "/all" }', signing)
         self.assertIn("& $signtool @verifyArguments", signing)
+        self.assertIn("Number of files successfully Verified: 1", signing)
+        self.assertIn("$validVerifiedSummary", signing)
         self.assertIn("Existing signature is invalid", signing)
 
         for workflow_name in ("flutter-build.yml", "flutter-build-windows.yml"):
