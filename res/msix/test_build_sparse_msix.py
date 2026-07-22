@@ -270,6 +270,8 @@ class SparseMsixManifestTests(unittest.TestCase):
             self.assertIn("RUSTDESK_IDENTITY_ROOT_SHA256=$rootHash", workflow)
             self.assertIn("RUSTDESK_IDENTITY_SIGNER_SHA256=$signerHash", workflow)
             self.assertIn("SHA256]::HashData($root[0].RawData)", workflow)
+            self.assertIn("$data.OtherCertificates | Where-Object", workflow)
+            self.assertIn("$data.EndEntityCertificates | Where-Object", workflow)
             step = workflow.split("- name: Build and sign sparse MSIX identity packages", 1)[1]
             self.assertIn("continue-on-error: true", step.split("- name:", 1)[0])
             self.assertIn("timeout-minutes: 5", step.split("- name:", 1)[0])

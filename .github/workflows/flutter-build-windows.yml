@@ -178,9 +178,8 @@ jobs:
           try {
             [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_IDENTITY_PFX_BASE64))
             $data = Get-PfxData -FilePath $pfxPath -Password (ConvertTo-SecureString $env:WINDOWS_IDENTITY_PFX_PASSWORD -AsPlainText -Force)
-            $certs = @($data.EndEntityCertificates) + @($data.OtherCertificates)
-            $root = @($certs | Where-Object { $_.Subject -eq "CN=RustDesk Identity Root" -and $_.Subject -eq $_.Issuer })
-            $signer = @($certs | Where-Object { $_.Subject -eq "CN=RustDesk" -and $_.Issuer -eq "CN=RustDesk Identity Root" })
+            $root = @($data.OtherCertificates | Where-Object { $_.Subject -eq "CN=RustDesk Identity Root" -and $_.Subject -eq $_.Issuer })
+            $signer = @($data.EndEntityCertificates | Where-Object { $_.Subject -eq "CN=RustDesk" -and $_.Issuer -eq "CN=RustDesk Identity Root" })
             if ($root.Count -ne 1 -or $signer.Count -ne 1) { throw "Sparse identity PFX must contain exactly one expected root and signer" }
             $rootHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($root[0].RawData))
             $signerHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($signer[0].RawData))
