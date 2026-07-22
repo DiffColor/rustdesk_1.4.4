@@ -326,6 +326,7 @@ jobs:
           if ($env:TAG_NAME -notmatch '^v?\d+\.\d+\.\d+(?:[.-]\d+)?$') { Write-Warning "Sparse MSIX requires a release version tag; continuing without identity package"; exit 0 }
           $pfxPath = Join-Path $env:RUNNER_TEMP "rustdesk-web-identity-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.pfx"
           $cerPath = Join-Path $env:RUNNER_TEMP "rustdesk-web-identity-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.cer"
+          $signerCerPath = Join-Path $env:RUNNER_TEMP "rustdesk-web-identity-signer-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.cer"
           $certMarker = Join-Path $env:RUNNER_TEMP "rustdesk-web-identity-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.thumbprint"
           $outputRoot = Join-Path $env:RUNNER_TEMP "rustdesk-web-identity-output-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           $stageRoot = Join-Path $env:RUNNER_TEMP "rustdesk-web-identity-stage-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
@@ -344,13 +345,19 @@ jobs:
             $makeappx = Join-Path $sdk.FullName "x64\makeappx.exe"; $signtool = Join-Path $sdk.FullName "x64\signtool.exe"
             [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:IDENTITY_PFX_BASE64))
             $securePassword = ConvertTo-SecureString $env:IDENTITY_PFX_PASSWORD -AsPlainText -Force
-            $cert = (Get-PfxData -FilePath $pfxPath -Password $securePassword).EndEntityCertificates | Select-Object -First 1
+            $pfxData = Get-PfxData -FilePath $pfxPath -Password $securePassword
+            $cert = $pfxData.EndEntityCertificates | Select-Object -First 1
+            $rootCert = $pfxData.OtherCertificates | Where-Object {
+              $_.Subject -eq $_.Issuer -and ($_.Extensions | Where-Object { $_ -is [System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension] -and $_.CertificateAuthority })
+            } | Select-Object -First 1
             if ($cert.Subject -ne "CN=RustDesk") { throw "Sparse MSIX certificate publisher mismatch" }
-            Export-Certificate -Cert $cert -FilePath $cerPath | Out-Null
+            if (-not $rootCert) { throw "Sparse MSIX PFX must contain a self-signed CA root certificate" }
+            Export-Certificate -Cert $cert -FilePath $signerCerPath | Out-Null
+            Export-Certificate -Cert $rootCert -FilePath $cerPath | Out-Null
             if (-not (Test-Path "Cert:\CurrentUser\TrustedPeople\$($cert.Thumbprint)")) {
               $trustedByStep = $true
               Set-Content $certMarker $cert.Thumbprint
-              Import-Certificate -FilePath $cerPath -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
+              Import-Certificate -FilePath $signerCerPath -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
             }
             foreach ($build in $builds) {
               Remove-Item $stageRoot -Recurse -Force -ErrorAction SilentlyContinue; New-Item (Join-Path $stageRoot "Assets") -ItemType Directory | Out-Null
@@ -395,12 +402,14 @@ jobs:
             foreach ($build in $builds) {
               Copy-Item $build.Output "$($build.Dir)\rustdesk-web-identity.msix"
               Copy-Item $cerPath "$($build.Dir)\rustdesk-web-identity.cer"
+              Copy-Item res\msix\manage_sparse_identity.ps1 "$($build.Dir)\manage_sparse_identity.ps1"
             }
             Set-Content identity-build-complete ok
             $succeeded = $true
           } finally {
             if (-not $succeeded) {
               foreach ($build in $builds) { Remove-Item "$($build.Dir)\rustdesk-web-identity.*" -Force -ErrorAction SilentlyContinue }
+              foreach ($build in $builds) { Remove-Item "$($build.Dir)\manage_sparse_identity.ps1" -Force -ErrorAction SilentlyContinue }
             }
             Remove-Item $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
             Remove-Item $outputRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -408,7 +417,7 @@ jobs:
               Remove-Item "Cert:\CurrentUser\TrustedPeople\$($cert.Thumbprint)" -Force -ErrorAction SilentlyContinue
               if (-not (Test-Path "Cert:\CurrentUser\TrustedPeople\$($cert.Thumbprint)")) { Remove-Item $certMarker -Force -ErrorAction SilentlyContinue }
             }
-            Remove-Item $pfxPath, $cerPath -Force -ErrorAction SilentlyContinue
+            Remove-Item $pfxPath, $cerPath, $signerCerPath -Force -ErrorAction SilentlyContinue
           }
 
       - name: Clean sparse MSIX signing material
@@ -418,14 +427,15 @@ jobs:
         run: |
           $pfxPath = Join-Path $env:RUNNER_TEMP "rustdesk-web-identity-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.pfx"
           $cerPath = Join-Path $env:RUNNER_TEMP "rustdesk-web-identity-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.cer"
+          $signerCerPath = Join-Path $env:RUNNER_TEMP "rustdesk-web-identity-signer-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.cer"
           $certMarker = Join-Path $env:RUNNER_TEMP "rustdesk-web-identity-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.thumbprint"
           $outputRoot = Join-Path $env:RUNNER_TEMP "rustdesk-web-identity-output-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           $stageRoot = Join-Path $env:RUNNER_TEMP "rustdesk-web-identity-stage-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           $thumbprint = if (Test-Path $certMarker) { (Get-Content $certMarker -Raw).Trim() } else { $null }
           if ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item "Cert:\CurrentUser\TrustedPeople\$thumbprint" -Force -ErrorAction SilentlyContinue }
-          if (-not (Test-Path identity-build-complete)) { Remove-Item rustdesk\rustdesk-web-identity.*, rustdesk-host\rustdesk-web-identity.* -Force -ErrorAction SilentlyContinue }
+          if (-not (Test-Path identity-build-complete)) { Remove-Item rustdesk\rustdesk-web-identity.*, rustdesk-host\rustdesk-web-identity.*, rustdesk\manage_sparse_identity.ps1, rustdesk-host\manage_sparse_identity.ps1 -Force -ErrorAction SilentlyContinue }
           Remove-Item $stageRoot, $outputRoot -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item $pfxPath, $cerPath -Force -ErrorAction SilentlyContinue
+          Remove-Item $pfxPath, $cerPath, $signerCerPath -Force -ErrorAction SilentlyContinue
           if (-not $thumbprint -or -not (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item $certMarker -Force -ErrorAction SilentlyContinue }
           if ((Test-Path $pfxPath) -or (Test-Path $stageRoot) -or (Test-Path $outputRoot) -or ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint"))) { Write-Warning "Sparse MSIX signing material cleanup was incomplete" }
 

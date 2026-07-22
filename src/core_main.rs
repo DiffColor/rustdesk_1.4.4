@@ -116,6 +116,12 @@ pub fn core_main() -> Option<Vec<String>> {
     if args.contains(&"--connect".to_string()) || args.contains(&"--view-camera".to_string()) {
         hbb_common::platform::windows::start_cpu_performance_monitor();
     }
+    #[cfg(windows)]
+    if args.is_empty() || _is_flutter_invoke_new_connection {
+        hbb_common::allow_err!(
+            crate::platform::windows::reconcile_sparse_identity_for_current_user()
+        );
+    }
     #[cfg(feature = "flutter")]
     if _is_flutter_invoke_new_connection {
         return core_main_invoke_new_connection(std::env::args());

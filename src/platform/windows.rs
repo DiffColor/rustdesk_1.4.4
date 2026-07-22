@@ -1308,16 +1308,23 @@ pub fn copy_exe_cmd(src_exe: &str, exe: &str, path: &str) -> ResultType<String> 
 
 const SPARSE_IDENTITY_PACKAGE: &str = "rustdesk-web-identity.msix";
 const SPARSE_IDENTITY_CERTIFICATE: &str = "rustdesk-web-identity.cer";
-const SPARSE_IDENTITY_SCRIPT: &str = include_str!("../../res/msix/manage_sparse_identity.ps1");
+const SPARSE_IDENTITY_SCRIPT: &str = "manage_sparse_identity.ps1";
 const SPARSE_IDENTITY_STATE_DIR: &str = "RustDesk\\web-identity";
 
 pub fn manage_sparse_identity(action: &str) -> ResultType<()> {
-    use hbb_common::base64::{engine::general_purpose::STANDARD, Engine as _};
-
     let exe = std::env::current_exe()?;
     let dir = exe
         .parent()
         .ok_or(anyhow!("Cannot locate RustDesk directory"))?;
+    if action == "Install" && !is_cur_exe_the_installed() {
+        log::warn!("Skipping sparse identity registration from a non-installed executable");
+        return Ok(());
+    }
+    let script_path = dir.join(SPARSE_IDENTITY_SCRIPT);
+    if !script_path.is_file() {
+        log::warn!("Sparse identity helper is unavailable; skipping {action}");
+        return Ok(());
+    }
     let state_dir = match std::env::var_os("LOCALAPPDATA") {
         Some(path) => std::path::PathBuf::from(path).join(SPARSE_IDENTITY_STATE_DIR),
         None => {
@@ -1341,25 +1348,6 @@ pub fn manage_sparse_identity(action: &str) -> ResultType<()> {
         format!("{action}|{request_id}"),
     )?;
 
-    let quote = |value: &std::path::Path| value.to_string_lossy().replace('\'', "''");
-    if SPARSE_IDENTITY_SCRIPT.lines().any(|line| line == "'@") {
-        bail!("Sparse identity script contains an invalid here-string terminator");
-    }
-    let command = format!(
-        "$s=@'\n{SPARSE_IDENTITY_SCRIPT}\n'@\n& ([ScriptBlock]::Create($s)) -Action '{action}' -RequestId '{request_id}' -PackagePath '{}' -CertificatePath '{}' -ExternalLocation '{}' -StateDirectory '{}'",
-        quote(&dir.join(SPARSE_IDENTITY_PACKAGE)),
-        quote(&dir.join(SPARSE_IDENTITY_CERTIFICATE)),
-        quote(dir),
-        quote(&state_dir),
-    );
-    let utf16 = command
-        .encode_utf16()
-        .flat_map(|unit| unit.to_le_bytes())
-        .collect::<Vec<_>>();
-    let encoded_command = STANDARD.encode(utf16);
-    if encoded_command.len() > 30_000 {
-        bail!("Sparse identity command exceeds the safe Windows command-line length");
-    }
     let mut command = std::process::Command::new("powershell.exe");
     command
         .args([
@@ -1370,13 +1358,44 @@ pub fn manage_sparse_identity(action: &str) -> ResultType<()> {
             "Hidden",
             "-ExecutionPolicy",
             "Bypass",
-            "-EncodedCommand",
+            "-File",
         ])
-        .arg(encoded_command);
+        .arg(script_path)
+        .args(["-Action", action, "-RequestId", &request_id])
+        .arg("-PackagePath")
+        .arg(dir.join(SPARSE_IDENTITY_PACKAGE))
+        .arg("-CertificatePath")
+        .arg(dir.join(SPARSE_IDENTITY_CERTIFICATE))
+        .arg("-ExternalLocation")
+        .arg(dir)
+        .arg("-StateDirectory")
+        .arg(&state_dir);
     command
         .creation_flags(winapi::um::winbase::CREATE_NO_WINDOW)
         .spawn()?;
     Ok(())
+}
+
+pub fn reconcile_sparse_identity_for_current_user() -> ResultType<()> {
+    let mut session_id = 0;
+    if unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut session_id) } == FALSE
+        || session_id == 0
+        || !is_cur_exe_the_installed()
+    {
+        return Ok(());
+    }
+
+    let exe = std::env::current_exe()?;
+    let dir = exe
+        .parent()
+        .ok_or(anyhow!("Cannot locate RustDesk directory"))?;
+    if !dir.join(SPARSE_IDENTITY_PACKAGE).is_file()
+        || !dir.join(SPARSE_IDENTITY_CERTIFICATE).is_file()
+    {
+        return Ok(());
+    }
+
+    manage_sparse_identity("Install")
 }
 
 fn get_after_install(
