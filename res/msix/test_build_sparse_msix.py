@@ -190,6 +190,8 @@ class SparseMsixManifestTests(unittest.TestCase):
         self.assertIn('include_str!("../../res/msix/manage_sparse_identity.ps1")', windows)
         self.assertIn('"-EncodedCommand"', windows)
         self.assertIn("GzEncoder::new", windows)
+        self.assertIn("[IO.MemoryStream]::new([byte[]]$b)", windows)
+        self.assertNotIn("[IO.MemoryStream]::new(,$b)", windows)
         self.assertNotIn('"-File"', windows)
         self.assertIn('RustDesk\\\\web-identity', windows)
         self.assertNotIn('std::env::temp_dir().join(format!("rustdesk-sparse-identity-', windows)
@@ -197,6 +199,14 @@ class SparseMsixManifestTests(unittest.TestCase):
         self.assertIn('Id="UnregisterSparseIdentity"', msi)
         self.assertIn('ExeCommand=" --provision-sparse-identity"', msi)
         self.assertIn('Execute="deferred" Impersonate="no"', msi)
+        self.assertLess(
+            msi.index('Action="TerminateProcesses" After="TryStopDeleteService"'),
+            msi.index('Action="TerminateBrokers" After="TerminateProcesses"'),
+        )
+        self.assertLess(
+            msi.index('Action="TerminateBrokers" After="TerminateProcesses"'),
+            msi.index('Action="UnregisterSparseIdentity" After="TerminateBrokers"'),
+        )
         self.assertNotIn('"rustdesk-web-identity.msix"', msi_preprocess)
         self.assertNotIn('"rustdesk-web-identity.cer"', msi_preprocess)
         self.assertIn('$StateDirectory', powershell)

@@ -1355,7 +1355,7 @@ fn encoded_sparse_identity_command(
     let script = STANDARD.encode(compressor.finish()?);
     let command = format!(
         "$b=[Convert]::FromBase64String('{script}');\
-         $m=[IO.MemoryStream]::new(,$b);\
+         $m=[IO.MemoryStream]::new([byte[]]$b);\
          $g=[IO.Compression.GzipStream]::new($m,[IO.Compression.CompressionMode]::Decompress);\
          $r=[IO.StreamReader]::new($g,[Text.Encoding]::UTF8);\
          & ([ScriptBlock]::Create($r.ReadToEnd())) \
@@ -1383,7 +1383,7 @@ pub fn manage_sparse_identity(action: &str) -> ResultType<()> {
     let dir = exe
         .parent()
         .ok_or(anyhow!("Cannot locate RustDesk directory"))?;
-    if action != "Uninstall" && !is_cur_exe_the_installed() {
+    if action == "Install" && !is_cur_exe_the_installed() {
         log::warn!("Skipping sparse identity registration from a non-installed executable");
         return Ok(());
     }
