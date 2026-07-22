@@ -148,7 +148,11 @@ try {
         $expectedChainBuildTrustFailure = $verifyExitCode -ne 0 -and
             $signature.Status -eq "UnknownError" -and $signToolWarnings.Count -eq 0 -and
             $signToolErrors.Count -eq 1 -and $chainBuildErrorIndices.Count -eq 1 -and
-            $chainBuildMessageIndices.Count -eq 1 -and $chainBuildMessageIndices[0] -eq ($chainBuildErrorIndices[0] + 1) -and
+            $chainBuildMessageIndices.Count -eq 1 -and $chainBuildErrorIndices[0] -ge 1 -and
+            $chainBuildMessageIndices[0] -eq ($chainBuildErrorIndices[0] + 3) -and
+            $verifyLines[$chainBuildErrorIndices[0] - 1] -match '^\s*Number of signatures successfully Verified: 0\s*$' -and
+            $verifyLines[$chainBuildErrorIndices[0] + 1] -match '^\s*Number of warnings: 0\s*$' -and
+            $verifyLines[$chainBuildErrorIndices[0] + 2] -match '^\s*Number of errors: 1\s*$' -and
             $verifiedSummaries.Count -eq 1 -and $verifiedSummaries[0] -match '^\s*Number of signatures successfully Verified: 0\s*$' -and
             $warningSummaries.Count -eq 1 -and $warningSummaries[0] -match '^\s*Number of warnings: 0\s*$' -and
             $errorSummaries.Count -eq 1 -and $errorSummaries[0] -match '^\s*Number of errors: 1\s*$'
