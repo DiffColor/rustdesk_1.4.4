@@ -254,7 +254,7 @@ class SparseMsixManifestTests(unittest.TestCase):
         self.assertIn("0x800B010A", signing)
         self.assertIn("A certificate chain could not be built to a trusted root authority", signing)
         self.assertIn("$expectedChainBuildTrustFailure", signing)
-        self.assertIn("$chainBuildMessageIndices[0] -eq ($chainBuildErrorIndices[0] + 3)", signing)
+        self.assertIn("$chainBuildMessageIndices.Count -eq 1", signing)
         self.assertIn('$signature.Status -eq "UnknownError"', signing)
         self.assertIn('$signature.Status -eq "Valid"', signing)
         self.assertIn("$signature.TimeStamperCertificate", signing)
@@ -308,7 +308,7 @@ class SparseMsixManifestTests(unittest.TestCase):
             final_verify = workflow.split("- name: Verify Windows release signatures", 1)[1]
             self.assertIn("0x800B010A", final_verify)
             self.assertIn("$expectedChainBuildTrustFailure", final_verify)
-            self.assertIn("$chainBuildMessageIndices[0] -eq ($chainBuildErrorIndices[0] + 3)", final_verify)
+            self.assertIn("$chainBuildMessageIndices.Count -eq 1", final_verify)
             self.assertIn("$validSignature", final_verify)
             self.assertIn("$signature.TimeStamperCertificate", final_verify)
             self.assertNotIn("$expectedLegacyRootTrustFailure", final_verify)
