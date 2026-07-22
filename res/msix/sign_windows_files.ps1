@@ -50,9 +50,38 @@ $succeeded = $false
 try {
     [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_IDENTITY_PFX_BASE64))
     $securePassword = ConvertTo-SecureString $env:WINDOWS_IDENTITY_PFX_PASSWORD -AsPlainText -Force
-    $cert = (Get-PfxData -FilePath $pfxPath -Password $securePassword).EndEntityCertificates | Select-Object -First 1
+    $pfxData = Get-PfxData -FilePath $pfxPath -Password $securePassword
+    $cert = $pfxData.EndEntityCertificates | Select-Object -First 1
+    $rootCerts = @($pfxData.OtherCertificates | Where-Object {
+        $_.Subject -eq $_.Issuer -and ($_.Extensions | Where-Object {
+            $_ -is [System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension] -and $_.CertificateAuthority
+        })
+    })
     if (-not $cert -or $cert.Subject -ne "CN=RustDesk") {
         throw "Windows signing certificate publisher mismatch"
+    }
+    if ($rootCerts.Count -ne 1) {
+        throw "Windows signing PFX must contain exactly one self-issued CA root certificate"
+    }
+    $rootCert = $rootCerts[0]
+    $signerSha256 = $cert.GetCertHashString([System.Security.Cryptography.HashAlgorithmName]::SHA256)
+    $rootSha256 = $rootCert.GetCertHashString([System.Security.Cryptography.HashAlgorithmName]::SHA256)
+    if (-not $env:RUSTDESK_IDENTITY_SIGNER_SHA256 -or $signerSha256 -ne $env:RUSTDESK_IDENTITY_SIGNER_SHA256) {
+        throw "Windows signing certificate does not match the signed runtime signer pin"
+    }
+    if (-not $env:RUSTDESK_IDENTITY_ROOT_SHA256 -or $rootSha256 -ne $env:RUSTDESK_IDENTITY_ROOT_SHA256) {
+        throw "Windows signing root does not match the signed runtime root pin"
+    }
+    $chain = [System.Security.Cryptography.X509Certificates.X509Chain]::new()
+    try {
+        $chain.ChainPolicy.TrustMode = [System.Security.Cryptography.X509Certificates.X509ChainTrustMode]::CustomRootTrust
+        $chain.ChainPolicy.CustomTrustStore.Add($rootCert)
+        $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+        if (-not $chain.Build($cert) -or $chain.ChainElements[$chain.ChainElements.Count - 1].Certificate.Thumbprint -ne $rootCert.Thumbprint) {
+            throw "Windows signing certificate does not chain to the pinned root certificate"
+        }
+    } finally {
+        $chain.Dispose()
     }
     Set-Content -LiteralPath $expectedSignerMarker -Value $cert.Thumbprint
     Export-Certificate -Cert $cert -FilePath $cerPath | Out-Null
@@ -100,18 +129,27 @@ try {
         $verifyLines = @(($verifyOutput -split '\r?\n') | Where-Object { $_ -notmatch '^\s*$' })
         $rootErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*SignTool Error: A certificate chain processed, but terminated in a root\s*$') { $i } })
         $providerErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*certificate which is not trusted by the trust provider\.\s*$') { $i } })
+        $chainBuildErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*SignTool Error: WinVerifyTrust returned error: 0x800B010A\s*$') { $i } })
+        $chainBuildMessageIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*A certificate chain could not be built to a trusted root authority\.\s*$') { $i } })
         $signToolErrors = @($verifyLines | Where-Object { $_ -match '^\s*SignTool Error:' })
         $verifiedSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of signatures successfully Verified:' })
         $warningSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of warnings:' })
         $errorSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of errors:' })
         $interposedLines = if ($rootErrorIndices.Count -eq 1 -and $providerErrorIndices.Count -eq 1 -and $providerErrorIndices[0] -gt ($rootErrorIndices[0] + 1)) { @($verifyLines[($rootErrorIndices[0] + 1)..($providerErrorIndices[0] - 1)]) } else { @() }
         $unexpectedInterposedLines = @($interposedLines | Where-Object { $_ -notmatch '^\s*(?:Verifying: .+|Signature Index: 0 \(Primary Signature\)|Hash of file \(sha256\): [0-9A-F]{64}|Signing Certificate Chain:|Issued to: .+|Issued by: .+|Expires:\s+.+|SHA1 hash: [0-9A-F]{40}|The signature is timestamped: .+|Timestamp Verified by:|Number of signatures successfully Verified: 0|Number of warnings: 0|Number of errors: 1)\s*$' })
-        $expectedRootTrustFailure = $verifyExitCode -ne 0 -and
+        $expectedLegacyRootTrustFailure = $verifyExitCode -ne 0 -and
             $signToolErrors.Count -eq 1 -and $rootErrorIndices.Count -eq 1 -and
             $providerErrorIndices.Count -eq 1 -and $providerErrorIndices[0] -gt $rootErrorIndices[0] -and $unexpectedInterposedLines.Count -eq 0 -and
             $verifiedSummaries.Count -eq 1 -and $verifiedSummaries[0] -match '^\s*Number of signatures successfully Verified: 0\s*$' -and
             $warningSummaries.Count -eq 1 -and $warningSummaries[0] -match '^\s*Number of warnings: 0\s*$' -and
             $errorSummaries.Count -eq 1 -and $errorSummaries[0] -match '^\s*Number of errors: 1\s*$'
+        $expectedChainBuildTrustFailure = $verifyExitCode -ne 0 -and
+            $signToolErrors.Count -eq 1 -and $chainBuildErrorIndices.Count -eq 1 -and
+            $chainBuildMessageIndices.Count -eq 1 -and $chainBuildMessageIndices[0] -eq ($chainBuildErrorIndices[0] + 1) -and
+            $verifiedSummaries.Count -eq 1 -and $verifiedSummaries[0] -match '^\s*Number of signatures successfully Verified: 0\s*$' -and
+            $warningSummaries.Count -eq 1 -and $warningSummaries[0] -match '^\s*Number of warnings: 0\s*$' -and
+            $errorSummaries.Count -eq 1 -and $errorSummaries[0] -match '^\s*Number of errors: 1\s*$'
+        $expectedRootTrustFailure = $expectedLegacyRootTrustFailure -or $expectedChainBuildTrustFailure
         if ($verifyExitCode -ne 0 -and -not $expectedRootTrustFailure) {
             throw "Unexpected SignTool verification failure: $($file.FullName)"
         }
