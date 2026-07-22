@@ -272,6 +272,8 @@ class SparseMsixManifestTests(unittest.TestCase):
             self.assertIn("SHA256]::HashData($root[0].RawData)", workflow)
             self.assertIn("$data.OtherCertificates | Where-Object", workflow)
             self.assertIn("$data.EndEntityCertificates | Where-Object", workflow)
+            self.assertIn("X509ChainTrustMode]::CustomRootTrust", workflow)
+            self.assertIn("Sparse identity signer does not chain to the expected root", workflow)
             step = workflow.split("- name: Build and sign sparse MSIX identity packages", 1)[1]
             self.assertIn("continue-on-error: true", step.split("- name:", 1)[0])
             self.assertIn("timeout-minutes: 5", step.split("- name:", 1)[0])

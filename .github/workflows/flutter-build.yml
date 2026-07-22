@@ -182,9 +182,18 @@ jobs:
           try {
             [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_IDENTITY_PFX_BASE64))
             $data = Get-PfxData -FilePath $pfxPath -Password (ConvertTo-SecureString $env:WINDOWS_IDENTITY_PFX_PASSWORD -AsPlainText -Force)
-            $root = @($data.OtherCertificates | Where-Object { $_.Subject -eq "CN=RustDesk Identity Root" -and $_.Subject -eq $_.Issuer })
-            $signer = @($data.EndEntityCertificates | Where-Object { $_.Subject -eq "CN=RustDesk" -and $_.Issuer -eq "CN=RustDesk Identity Root" })
+            $root = @($data.OtherCertificates | Where-Object {
+              $_.Subject -eq $_.Issuer -and ($_.Extensions | Where-Object { $_ -is [Security.Cryptography.X509Certificates.X509BasicConstraintsExtension] -and $_.CertificateAuthority })
+            })
+            $signer = @($data.EndEntityCertificates | Where-Object { $_.Subject -eq "CN=RustDesk" })
             if ($root.Count -ne 1 -or $signer.Count -ne 1) { throw "Sparse identity PFX must contain exactly one expected root and signer" }
+            $chain = [Security.Cryptography.X509Certificates.X509Chain]::new()
+            try {
+              $chain.ChainPolicy.TrustMode = [Security.Cryptography.X509Certificates.X509ChainTrustMode]::CustomRootTrust
+              $chain.ChainPolicy.CustomTrustStore.Add($root[0])
+              $chain.ChainPolicy.RevocationMode = [Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+              if (-not $chain.Build($signer[0]) -or $chain.ChainElements[$chain.ChainElements.Count - 1].Certificate.Thumbprint -ne $root[0].Thumbprint) { throw "Sparse identity signer does not chain to the expected root" }
+            } finally { $chain.Dispose() }
             $rootHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($root[0].RawData))
             $signerHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($signer[0].RawData))
             "RUSTDESK_IDENTITY_ROOT_SHA256=$rootHash" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
