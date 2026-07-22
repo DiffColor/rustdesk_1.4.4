@@ -199,14 +199,11 @@ class SparseMsixManifestTests(unittest.TestCase):
         self.assertIn('Id="UnregisterSparseIdentity"', msi)
         self.assertIn('ExeCommand=" --provision-sparse-identity"', msi)
         self.assertIn('Execute="deferred" Impersonate="no"', msi)
-        self.assertLess(
-            msi.index('Action="TerminateProcesses" After="TryStopDeleteService"'),
-            msi.index('Action="TerminateBrokers" After="TerminateProcesses"'),
-        )
-        self.assertLess(
-            msi.index('Action="TerminateBrokers" After="TerminateProcesses"'),
-            msi.index('Action="UnregisterSparseIdentity" After="TerminateBrokers"'),
-        )
+        self.assertIn('Action="RemoveInstallFolder.SetParam" Before="TryStopDeleteService"', msi)
+        self.assertIn('Action="TryStopDeleteService" Before="TerminateProcesses"', msi)
+        self.assertIn('Action="TerminateProcesses" Before="TerminateBrokers"', msi)
+        self.assertIn('Action="TerminateBrokers" Before="UnregisterSparseIdentity"', msi)
+        self.assertIn('Action="UnregisterSparseIdentity" Before="RemoveInstallFolder"', msi)
         self.assertNotIn('"rustdesk-web-identity.msix"', msi_preprocess)
         self.assertNotIn('"rustdesk-web-identity.cer"', msi_preprocess)
         self.assertIn('$StateDirectory', powershell)
