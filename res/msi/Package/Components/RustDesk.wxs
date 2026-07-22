@@ -20,6 +20,8 @@
 
 		<CustomAction Id="LaunchApp" ExeCommand="" Return="asyncNoWait" FileRef="App.exe" />
 		<CustomAction Id="LaunchAppTray" ExeCommand=" --tray" Return="asyncNoWait" FileRef="App.exe" />
+		<CustomAction Id="RegisterSparseIdentity" ExeCommand=" --provision-sparse-identity" Return="ignore" Execute="deferred" Impersonate="no" FileRef="App.exe" />
+		<CustomAction Id="UnregisterSparseIdentity" ExeCommand=" --unregister-sparse-identity" Return="ignore" Execute="deferred" Impersonate="no" FileRef="App.exe" />
 		<Property Id="TerminateProcesses" Value="AppTest.exe" />
 		<CustomAction Id="TerminateProcesses.SetParam" Return="check" Property="TerminateProcesses" Value="$(var.Product).exe" />
 		<CustomAction Id="TerminateBrokers.SetParam" Return="check" Property="TerminateProcesses" Value="RuntimeBroker_rustdesk.exe" />
@@ -48,6 +50,8 @@
 			<Custom Action="CreateStartService.SetParam" Before="CreateStartService" Condition="(NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)) AND (NOT STOP_SERVICE=&quot;&apos;Y&apos;&quot;) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;)" />
 
 			<Custom Action="CustomActionHello" Before="InstallFinalize" />
+			<!-- Machine trust is provisioned best-effort; interactive users reconcile their own package registration from the tray/UI. -->
+			<Custom Action="RegisterSparseIdentity" After="InstallFiles" Condition="NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)" />
 
 			<!--Shortcut is in InstallValidate section. So we just let it be created, then try delete if stopping service.-->
 			<Custom Action="TryDeleteStartupShortcut" After="InstallFinalize" Condition="STOP_SERVICE=&quot;&apos;Y&apos;&quot;" />
@@ -77,6 +81,7 @@
 
 			<Custom Action="AddRegSoftwareSASGeneration" Before="InstallFinalize" Condition="NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;)"/>
 
+			<Custom Action="UnregisterSparseIdentity" Before="TryStopDeleteService" Condition="Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE" />
 			<Custom Action="RemoveInstallFolder" Before="RemoveFiles"/>
 			<Custom Action="RemoveInstallFolder.SetParam" Before="RemoveInstallFolder"/>
 			<Custom Action="TryStopDeleteService" Before="RemoveInstallFolder.SetParam" />

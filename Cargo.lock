@@ -6626,6 +6626,7 @@ dependencies = [
  "enigo",
  "errno",
  "evdev",
+ "flate2",
  "flutter_rust_bridge",
  "fon",
  "fontdb",

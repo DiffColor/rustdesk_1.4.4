@@ -117,7 +117,10 @@ pub fn core_main() -> Option<Vec<String>> {
         hbb_common::platform::windows::start_cpu_performance_monitor();
     }
     #[cfg(windows)]
-    if args.is_empty() || _is_flutter_invoke_new_connection {
+    if args.is_empty()
+        || args.first().map(String::as_str) == Some("--tray")
+        || _is_flutter_invoke_new_connection
+    {
         hbb_common::allow_err!(
             crate::platform::windows::reconcile_sparse_identity_for_current_user()
         );
@@ -261,6 +264,12 @@ pub fn core_main() -> Option<Vec<String>> {
             } else if args[0] == "--register-sparse-identity" {
                 #[cfg(windows)]
                 hbb_common::allow_err!(crate::platform::windows::manage_sparse_identity("Install"));
+                return None;
+            } else if args[0] == "--provision-sparse-identity" {
+                #[cfg(windows)]
+                hbb_common::allow_err!(crate::platform::windows::manage_sparse_identity(
+                    "Provision"
+                ));
                 return None;
             } else if args[0] == "--unregister-sparse-identity" {
                 #[cfg(windows)]

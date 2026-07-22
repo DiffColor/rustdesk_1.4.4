@@ -167,8 +167,32 @@ jobs:
           head -n 100 "${VCPKG_ROOT}/buildtrees/ffmpeg/build-${{ matrix.job.vcpkg-triplet }}-rel-out.log" || true
         shell: bash
 
+      - name: Prepare runtime sparse identity pins
+        if: env.UPLOAD_ARTIFACT == 'true'
+        env:
+          WINDOWS_IDENTITY_PFX_BASE64: ${{ secrets.WINDOWS_IDENTITY_PFX_BASE64 }}
+          WINDOWS_IDENTITY_PFX_PASSWORD: ${{ secrets.WINDOWS_IDENTITY_PFX_PASSWORD }}
+        shell: pwsh
+        run: |
+          $pfxPath = Join-Path $env:RUNNER_TEMP "rustdesk-web-identity-build-pin-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.pfx"
+          try {
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_IDENTITY_PFX_BASE64))
+            $data = Get-PfxData -FilePath $pfxPath -Password (ConvertTo-SecureString $env:WINDOWS_IDENTITY_PFX_PASSWORD -AsPlainText -Force)
+            $certs = @($data.EndEntityCertificates) + @($data.OtherCertificates)
+            $root = @($certs | Where-Object { $_.Subject -eq "CN=RustDesk Identity Root" -and $_.Subject -eq $_.Issuer })
+            $signer = @($certs | Where-Object { $_.Subject -eq "CN=RustDesk" -and $_.Issuer -eq "CN=RustDesk Identity Root" })
+            if ($root.Count -ne 1 -or $signer.Count -ne 1) { throw "Sparse identity PFX must contain exactly one expected root and signer" }
+            $rootHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($root[0].RawData))
+            $signerHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($signer[0].RawData))
+            "RUSTDESK_IDENTITY_ROOT_SHA256=$rootHash" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+            "RUSTDESK_IDENTITY_SIGNER_SHA256=$signerHash" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          } finally {
+            Remove-Item $pfxPath -Force -ErrorAction SilentlyContinue
+          }
+
       - name: Build rustdesk
         run: |
+          if ($env:UPLOAD_ARTIFACT -eq "true" -and (-not $env:RUSTDESK_IDENTITY_ROOT_SHA256 -or -not $env:RUSTDESK_IDENTITY_SIGNER_SHA256)) { throw "Sparse identity runtime pins were not set" }
           # Windows: build RustDesk
           python3 .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
           mv ./flutter/build/windows/x64/runner/Release ./rustdesk
@@ -407,14 +431,12 @@ jobs:
             foreach ($build in $builds) {
               Copy-Item $build.Output "$($build.Dir)\rustdesk-web-identity.msix"
               Copy-Item $cerPath "$($build.Dir)\rustdesk-web-identity.cer"
-              Copy-Item res\msix\manage_sparse_identity.ps1 "$($build.Dir)\manage_sparse_identity.ps1"
             }
             Set-Content identity-build-complete ok
             $succeeded = $true
           } finally {
             if (-not $succeeded) {
               foreach ($build in $builds) { Remove-Item "$($build.Dir)\rustdesk-web-identity.*" -Force -ErrorAction SilentlyContinue }
-              foreach ($build in $builds) { Remove-Item "$($build.Dir)\manage_sparse_identity.ps1" -Force -ErrorAction SilentlyContinue }
             }
             Remove-Item $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
             Remove-Item $outputRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -438,7 +460,7 @@ jobs:
           $stageRoot = Join-Path $env:RUNNER_TEMP "rustdesk-web-identity-stage-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           $thumbprint = if (Test-Path $certMarker) { (Get-Content $certMarker -Raw).Trim() } else { $null }
           if ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item "Cert:\CurrentUser\TrustedPeople\$thumbprint" -Force -ErrorAction SilentlyContinue }
-          if (-not (Test-Path identity-build-complete)) { Remove-Item rustdesk\rustdesk-web-identity.*, rustdesk-host\rustdesk-web-identity.*, rustdesk\manage_sparse_identity.ps1, rustdesk-host\manage_sparse_identity.ps1 -Force -ErrorAction SilentlyContinue }
+          if (-not (Test-Path identity-build-complete)) { Remove-Item rustdesk\rustdesk-web-identity.*, rustdesk-host\rustdesk-web-identity.* -Force -ErrorAction SilentlyContinue }
           Remove-Item $stageRoot, $outputRoot -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item $pfxPath, $cerPath, $signerCerPath -Force -ErrorAction SilentlyContinue
           if (-not $thumbprint -or -not (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item $certMarker -Force -ErrorAction SilentlyContinue }
@@ -632,12 +654,15 @@ jobs:
           $sparsePfxPath = Join-Path $env:RUNNER_TEMP "$sparsePrefix.pfx"
           $sparseCerPath = Join-Path $env:RUNNER_TEMP "$sparsePrefix.cer"
           $sparseCertMarker = Join-Path $env:RUNNER_TEMP "$sparsePrefix.thumbprint"
-          $thumbprint = if (Test-Path $certMarker) { (Get-Content $certMarker -Raw).Trim() } elseif (Test-Path $sparseCertMarker) { (Get-Content $sparseCertMarker -Raw).Trim() } else { $null }
-          if ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item "Cert:\CurrentUser\TrustedPeople\$thumbprint" -Force }
+          $thumbprints = @(@($certMarker, $sparseCertMarker) | Where-Object { Test-Path $_ } | ForEach-Object { (Get-Content $_ -Raw).Trim() } | Where-Object { $_ } | Select-Object -Unique)
+          foreach ($thumbprint in $thumbprints) {
+            if (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint") { Remove-Item "Cert:\CurrentUser\TrustedPeople\$thumbprint" -Force }
+          }
           $temporaryFiles = @($pfxPath, $cerPath, $certMarker, $expectedSignerMarker, $sparsePfxPath, $sparseCerPath, $sparseCertMarker)
           Remove-Item $temporaryFiles -Force -ErrorAction SilentlyContinue
           $residue = @($temporaryFiles | Where-Object { Test-Path $_ })
-          if ($residue.Count -ne 0 -or ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint"))) { throw "Windows release signing material cleanup was incomplete" }
+          $certificateResidue = @($thumbprints | Where-Object { Test-Path "Cert:\CurrentUser\TrustedPeople\$_" })
+          if ($residue.Count -ne 0 -or $certificateResidue.Count -ne 0) { throw "Windows release signing material cleanup was incomplete" }
 
       - name: Publish Release
         uses: softprops/action-gh-release@v2

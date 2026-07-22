@@ -1308,21 +1308,83 @@ pub fn copy_exe_cmd(src_exe: &str, exe: &str, path: &str) -> ResultType<String> 
 
 const SPARSE_IDENTITY_PACKAGE: &str = "rustdesk-web-identity.msix";
 const SPARSE_IDENTITY_CERTIFICATE: &str = "rustdesk-web-identity.cer";
-const SPARSE_IDENTITY_SCRIPT: &str = "manage_sparse_identity.ps1";
 const SPARSE_IDENTITY_STATE_DIR: &str = "RustDesk\\web-identity";
+const SPARSE_IDENTITY_SCRIPT: &str = include_str!("../../res/msix/manage_sparse_identity.ps1");
+const SPARSE_IDENTITY_ROOT_SHA256: &str = match option_env!("RUSTDESK_IDENTITY_ROOT_SHA256") {
+    Some(value) => value,
+    None => "",
+};
+const SPARSE_IDENTITY_SIGNER_SHA256: &str = match option_env!("RUSTDESK_IDENTITY_SIGNER_SHA256") {
+    Some(value) => value,
+    None => "",
+};
+
+fn copy_sparse_identity_commands(src_dir: &std::path::Path, target_dir: &str) -> String {
+    [SPARSE_IDENTITY_PACKAGE, SPARSE_IDENTITY_CERTIFICATE]
+        .iter()
+        .map(|name| {
+            let source = src_dir.join(name);
+            format!(
+                "if exist \"{}\" copy /Y \"{}\" \"{target_dir}\\{name}\"",
+                source.display(),
+                source.display()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn powershell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn encoded_sparse_identity_command(
+    action: &str,
+    request_id: &str,
+    package_path: &std::path::Path,
+    certificate_path: &std::path::Path,
+    external_location: &std::path::Path,
+    state_dir: &std::path::Path,
+) -> ResultType<String> {
+    use flate2::{write::GzEncoder, Compression};
+    use hbb_common::base64::{engine::general_purpose::STANDARD, Engine as _};
+    use std::io::Write;
+
+    let mut compressor = GzEncoder::new(Vec::new(), Compression::best());
+    compressor.write_all(SPARSE_IDENTITY_SCRIPT.as_bytes())?;
+    let script = STANDARD.encode(compressor.finish()?);
+    let command = format!(
+        "$b=[Convert]::FromBase64String('{script}');\
+         $m=[IO.MemoryStream]::new(,$b);\
+         $g=[IO.Compression.GzipStream]::new($m,[IO.Compression.CompressionMode]::Decompress);\
+         $r=[IO.StreamReader]::new($g,[Text.Encoding]::UTF8);\
+         & ([ScriptBlock]::Create($r.ReadToEnd())) \
+           -Action {} -RequestId {} -PackagePath {} -CertificatePath {} \
+           -ExternalLocation {} -StateDirectory {} -ExpectedRootSha256 {} \
+           -ExpectedSignerSha256 {}",
+        powershell_quote(action),
+        powershell_quote(request_id),
+        powershell_quote(&package_path.to_string_lossy()),
+        powershell_quote(&certificate_path.to_string_lossy()),
+        powershell_quote(&external_location.to_string_lossy()),
+        powershell_quote(&state_dir.to_string_lossy()),
+        powershell_quote(SPARSE_IDENTITY_ROOT_SHA256),
+        powershell_quote(SPARSE_IDENTITY_SIGNER_SHA256),
+    );
+    let utf16 = command
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect::<Vec<_>>();
+    Ok(STANDARD.encode(utf16))
+}
 
 pub fn manage_sparse_identity(action: &str) -> ResultType<()> {
     let exe = std::env::current_exe()?;
     let dir = exe
         .parent()
         .ok_or(anyhow!("Cannot locate RustDesk directory"))?;
-    if action == "Install" && !is_cur_exe_the_installed() {
+    if action != "Uninstall" && !is_cur_exe_the_installed() {
         log::warn!("Skipping sparse identity registration from a non-installed executable");
-        return Ok(());
-    }
-    let script_path = dir.join(SPARSE_IDENTITY_SCRIPT);
-    if !script_path.is_file() {
-        log::warn!("Sparse identity helper is unavailable; skipping {action}");
         return Ok(());
     }
     let state_dir = match std::env::var_os("LOCALAPPDATA") {
@@ -1332,9 +1394,6 @@ pub fn manage_sparse_identity(action: &str) -> ResultType<()> {
             return Ok(());
         }
     };
-    if action == "Uninstall" && !state_dir.exists() {
-        return Ok(());
-    }
     std::fs::create_dir_all(&state_dir)?;
     let request_id = format!(
         "{}-{}",
@@ -1348,31 +1407,43 @@ pub fn manage_sparse_identity(action: &str) -> ResultType<()> {
         format!("{action}|{request_id}"),
     )?;
 
+    let encoded_command = encoded_sparse_identity_command(
+        action,
+        &request_id,
+        &dir.join(SPARSE_IDENTITY_PACKAGE),
+        &dir.join(SPARSE_IDENTITY_CERTIFICATE),
+        dir,
+        &state_dir,
+    )?;
     let mut command = std::process::Command::new("powershell.exe");
-    command
-        .args([
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-WindowStyle",
-            "Hidden",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-        ])
-        .arg(script_path)
-        .args(["-Action", action, "-RequestId", &request_id])
-        .arg("-PackagePath")
-        .arg(dir.join(SPARSE_IDENTITY_PACKAGE))
-        .arg("-CertificatePath")
-        .arg(dir.join(SPARSE_IDENTITY_CERTIFICATE))
-        .arg("-ExternalLocation")
-        .arg(dir)
-        .arg("-StateDirectory")
-        .arg(&state_dir);
-    command
+    command.args([
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
+        "-EncodedCommand",
+        &encoded_command,
+    ]);
+    let mut child = command
         .creation_flags(winapi::um::winbase::CREATE_NO_WINDOW)
         .spawn()?;
+    if action == "Uninstall" {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            if let Some(status) = child.try_wait()? {
+                if !status.success() {
+                    bail!("Sparse identity cleanup failed with {status}");
+                }
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                allow_err!(child.kill());
+                bail!("Sparse identity cleanup timed out");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
     Ok(())
 }
 
@@ -1569,17 +1640,7 @@ if exist \"{tmp_path}\\{app_name} Tray.lnk\" del /f /q \"{tmp_path}\\{app_name} 
     let src_dir = std::path::Path::new(&src_exe)
         .parent()
         .unwrap_or_else(|| std::path::Path::new(""));
-    let identity_files = [SPARSE_IDENTITY_PACKAGE, SPARSE_IDENTITY_CERTIFICATE]
-        .iter()
-        .map(|name| {
-            format!(
-                "if exist \"{}\" copy /Y \"{}\" \"{path}\\{name}\"",
-                src_dir.join(name).display(),
-                src_dir.join(name).display()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let identity_files = copy_sparse_identity_commands(src_dir, &path);
 
     // potential bug here: if run_cmd cancelled, but config file is changed.
     if let Some(lic) = get_license() {
@@ -2822,6 +2883,9 @@ if exist \"{tray_shortcut}\" del /f /q \"{tray_shortcut}\"
 pub fn update_me(debug: bool) -> ResultType<()> {
     let app_name = crate::get_app_name();
     let src_exe = std::env::current_exe()?.to_string_lossy().to_string();
+    let src_dir = std::path::Path::new(&src_exe)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new(""));
     let (subkey, path, _, exe) = get_install_info();
     let is_installed = std::fs::metadata(&exe).is_ok();
     if !is_installed {
@@ -2915,13 +2979,17 @@ sc stop {app_name}
 taskkill /F /IM {app_name}.exe{filter}
 {reg_cmd}
 {copy_exe}
+{identity_files}
+start "" /b "{exe}" --register-sparse-identity
 {restore_service_cmd}
 {uninstall_printer_cmd}
 {install_printer_cmd}
 {sleep}
     ",
         app_name = app_name,
+        exe = exe,
         copy_exe = copy_exe_cmd(&src_exe, &exe, &path)?,
+        identity_files = copy_sparse_identity_commands(src_dir, &path),
         sleep = if debug { "timeout 300" } else { "" },
     );
 

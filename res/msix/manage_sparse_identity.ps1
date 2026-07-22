@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Install", "Uninstall")]
+    [ValidateSet("Provision", "Install", "Uninstall")]
     [string]$Action,
 
     [Parameter(Mandatory = $true)]
@@ -12,12 +12,17 @@ param(
     [string]$CertificatePath,
     [string]$ExternalLocation,
     [Parameter(Mandatory = $true)]
-    [string]$StateDirectory
+    [string]$StateDirectory,
+    [Parameter(Mandatory = $true)]
+    [string]$ExpectedRootSha256,
+    [Parameter(Mandatory = $true)]
+    [string]$ExpectedSignerSha256
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
-$OwnershipPath = Join-Path $StateDirectory "owned-certificates"
+$MachineStateDirectory = Join-Path $env:ProgramData "RustDesk\web-identity"
+$OwnershipPath = Join-Path $MachineStateDirectory "owned-certificates"
 $DesiredStatePath = Join-Path $StateDirectory "desired-state"
 $ResultPath = Join-Path $StateDirectory "last-result.json"
 
@@ -58,7 +63,45 @@ function Get-PackageCertificate {
     if ($certificate.Subject -ne $certificate.Issuer) {
         throw "Sparse MSIX trust certificate must be a self-signed root"
     }
+    $rootHash = Get-CertificateSha256 -Certificate $certificate
+    if ($ExpectedRootSha256 -notmatch '^[0-9A-Fa-f]{64}$' -or
+        $rootHash -ne $ExpectedRootSha256.ToUpperInvariant()) {
+        throw "Sparse identity trust certificate does not match the signed RustDesk runtime pin"
+    }
     return $certificate
+}
+
+function Get-CertificateSha256 {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate
+    )
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha256.ComputeHash($Certificate.RawData))).Replace("-", "")
+    } finally {
+        $sha256.Dispose()
+    }
+}
+
+function Assert-PackageSignatureBinding {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if ($ExpectedSignerSha256 -notmatch '^[0-9A-Fa-f]{64}$') {
+        throw "Sparse identity signer pin is unavailable"
+    }
+    $signature = Get-AuthenticodeSignature -FilePath $Path
+    if ($null -eq $signature.SignerCertificate) {
+        throw "Sparse identity package has no Authenticode signer"
+    }
+    $signerHash = Get-CertificateSha256 -Certificate $signature.SignerCertificate
+    if ($signerHash -ne $ExpectedSignerSha256.ToUpperInvariant()) {
+        throw "Sparse identity package signer does not match the signed RustDesk runtime pin"
+    }
+    if ($signature.Status.ToString() -notin @("Valid", "UnknownError", "NotTrusted")) {
+        throw "Sparse identity package signature is invalid: $($signature.Status)"
+    }
 }
 
 function Add-TrustRootCertificate {
@@ -129,6 +172,7 @@ function Remove-TrustRootCertificate {
 function Add-OwnedCertificate {
     param([Parameter(Mandatory = $true)][string]$Thumbprint)
 
+    New-Item -ItemType Directory -Path $MachineStateDirectory -Force | Out-Null
     $owned = if (Test-Path -LiteralPath $OwnershipPath -PathType Leaf) {
         @(Get-Content -LiteralPath $OwnershipPath)
     } else {
@@ -192,8 +236,18 @@ function Remove-ObsoleteOwnedCertificates {
 }
 
 function Remove-IdentityPackage {
-    Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue |
-        Remove-AppxPackage -ErrorAction Stop
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
+    $isAdministrator = $principal.IsInRole(
+        [System.Security.Principal.WindowsBuiltInRole]::Administrator
+    )
+    if ($isAdministrator) {
+        Get-AppxPackage -AllUsers -Name $PackageName -ErrorAction SilentlyContinue |
+            Remove-AppxPackage -AllUsers -ErrorAction Stop
+    } else {
+        Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue |
+            Remove-AppxPackage -ErrorAction Stop
+    }
 }
 
 function Test-CurrentRequest {
@@ -202,7 +256,7 @@ function Test-CurrentRequest {
 }
 
 function Invoke-IdentityAction {
-    if ($Action -eq "Install") {
+    if ($Action -in @("Provision", "Install")) {
         if ([Environment]::OSVersion.Version.Build -lt 19041) {
             Write-Host "Sparse MSIX identity requires Windows build 19041 or newer; skipping registration."
             Write-OperationResult -Status "unsupported" -Message "Windows build 19041 or newer is required"
@@ -216,18 +270,23 @@ function Invoke-IdentityAction {
         }
 
         $certificate = Get-PackageCertificate -Path $CertificatePath
-        $certificateAdded = $false
+        Assert-PackageSignatureBinding -Path $PackagePath
         if (-not (Test-TrustRootCertificate -Thumbprint $certificate.Thumbprint)) {
             Add-OwnedCertificate -Thumbprint $certificate.Thumbprint
             try {
-                $certificateAdded = Add-TrustRootCertificate -Certificate $certificate
-                if (-not $certificateAdded) {
+                if (-not (Add-TrustRootCertificate -Certificate $certificate)) {
                     Remove-OwnedCertificate -Thumbprint $certificate.Thumbprint
                 }
             } catch {
                 Remove-OwnedCertificate -Thumbprint $certificate.Thumbprint
                 throw
             }
+        }
+        if ($Action -eq "Provision") {
+            Remove-ObsoleteOwnedCertificates -KeepThumbprint $certificate.Thumbprint
+            Write-Host "Provisioned sparse MSIX machine trust."
+            Write-OperationResult -Status "provisioned" -Message "Sparse identity machine trust provisioned"
+            return
         }
         try {
             Add-AppxPackage `
@@ -253,10 +312,6 @@ function Invoke-IdentityAction {
             Write-Host "Registered sparse MSIX identity: $($registered.PackageFamilyName)"
             Write-OperationResult -Status "registered" -Message "Sparse identity registered" -PackageFamilyName $registered.PackageFamilyName
         } catch {
-            if ($certificateAdded) {
-                Remove-TrustRootCertificate -Thumbprint $certificate.Thumbprint
-                Remove-OwnedCertificate -Thumbprint $certificate.Thumbprint
-            }
             $registered = Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue
             if ($null -ne $registered) {
                 if (-not (Test-CurrentRequest)) {

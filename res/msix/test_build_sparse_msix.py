@@ -175,28 +175,32 @@ class SparseMsixManifestTests(unittest.TestCase):
         signing = (Path(__file__).with_name("sign_windows_files.ps1")).read_text()
 
         self.assertNotIn("-ForceApplicationShutdown", powershell)
-        install_branch = powershell.split('if ($Action -eq "Install")', 1)[1].split(
+        install_branch = powershell.split('if ($Action -in @("Provision", "Install"))', 1)[1].split(
             "} else {", 1
         )[0]
         self.assertEqual(install_branch.count("Remove-IdentityPackage"), 2)
         self.assertGreaterEqual(install_branch.count("Test-CurrentRequest"), 2)
         self.assertNotIn("std::process::exit(1)", core)
-        self.assertEqual(core.count('#[cfg(windows)]\n                hbb_common::allow_err!(crate::platform::windows::manage_sparse_identity'), 2)
+        self.assertEqual(core.count('#[cfg(windows)]\n                hbb_common::allow_err!(crate::platform::windows::manage_sparse_identity'), 3)
         self.assertIn('get_uninstall(false, false, false)', windows)
         self.assertIn('get_uninstall(kill_self, true, true)', windows)
         self.assertNotIn("parent().unwrap_or_default()", windows)
         self.assertIn('if unregister_sparse_identity {', windows)
         self.assertIn('.spawn()?', windows)
-        self.assertIn('const SPARSE_IDENTITY_SCRIPT: &str = "manage_sparse_identity.ps1"', windows)
-        self.assertIn('"-File"', windows)
-        self.assertIn(".arg(script_path)", windows)
+        self.assertIn('include_str!("../../res/msix/manage_sparse_identity.ps1")', windows)
+        self.assertIn('"-EncodedCommand"', windows)
+        self.assertIn("GzEncoder::new", windows)
+        self.assertNotIn('"-File"', windows)
         self.assertIn('RustDesk\\\\web-identity', windows)
         self.assertNotIn('std::env::temp_dir().join(format!("rustdesk-sparse-identity-', windows)
-        self.assertNotIn('Id="RegisterSparseIdentity"', msi)
-        self.assertNotIn('Id="UnregisterSparseIdentity"', msi)
+        self.assertIn('Id="RegisterSparseIdentity"', msi)
+        self.assertIn('Id="UnregisterSparseIdentity"', msi)
+        self.assertIn('ExeCommand=" --provision-sparse-identity"', msi)
+        self.assertIn('Execute="deferred" Impersonate="no"', msi)
         self.assertNotIn('"rustdesk-web-identity.msix"', msi_preprocess)
         self.assertNotIn('"rustdesk-web-identity.cer"', msi_preprocess)
         self.assertIn('$StateDirectory', powershell)
+        self.assertIn('$env:ProgramData "RustDesk\\web-identity"', powershell)
         self.assertIn('Add-Content -LiteralPath $OwnershipPath', powershell)
         self.assertIn('Remove-OwnedCertificates', powershell)
         self.assertIn('Remove-ObsoleteOwnedCertificates', powershell)
@@ -210,15 +214,27 @@ class SparseMsixManifestTests(unittest.TestCase):
         self.assertNotIn("StoreLocation]::CurrentUser", powershell)
         self.assertIn("CertificateAuthority", powershell)
         self.assertIn('"--register-sparse-identity"', core)
+        self.assertIn('Some("--tray")', core)
         self.assertIn("reconcile_sparse_identity_for_current_user", core)
+        self.assertIn("Get-AppxPackage -AllUsers", powershell)
+        self.assertIn("Remove-AppxPackage -AllUsers", powershell)
+        self.assertIn("ExpectedRootSha256", powershell)
+        self.assertIn("ExpectedSignerSha256", powershell)
+        self.assertIn("Get-AuthenticodeSignature -FilePath $Path", powershell)
+        self.assertIn("signed RustDesk runtime pin", powershell)
+        self.assertIn('[ValidateSet("Provision", "Install", "Uninstall")]', powershell)
+        self.assertIn('$Action -eq "Provision"', powershell)
+        self.assertIn('args[0] == "--provision-sparse-identity"', core)
+        self.assertIn('option_env!("RUSTDESK_IDENTITY_ROOT_SHA256")', windows)
+        self.assertIn('option_env!("RUSTDESK_IDENTITY_SIGNER_SHA256")', windows)
         self.assertNotIn("Remove-Item -LiteralPath $DesiredStatePath", powershell)
         self.assertNotIn("Remove-Item -LiteralPath $StateDirectory", powershell)
         self.assertLess(
             powershell.index("Add-OwnedCertificate -Thumbprint $certificate.Thumbprint"),
-            powershell.index("$certificateAdded = Add-TrustRootCertificate"),
+            powershell.index("Add-TrustRootCertificate -Certificate $certificate"),
         )
-        self.assertNotIn("-EncodedCommand", windows)
-        self.assertNotIn("encoded_command.len() > 30_000", windows)
+        self.assertIn("copy_sparse_identity_commands(src_dir, &path)", windows)
+        self.assertIn('start "" /b "{exe}" --register-sparse-identity', windows)
         self.assertIn('@(".dll", ".exe", ".msi")', signing)
         self.assertNotIn('".sys"', signing)
         self.assertIn("/tr $timestampUrl /td SHA256", signing)
@@ -237,6 +253,13 @@ class SparseMsixManifestTests(unittest.TestCase):
 
         for workflow_name in ("flutter-build.yml", "flutter-build-windows.yml"):
             workflow = (REPO_ROOT / ".github/workflows" / workflow_name).read_text()
+            self.assertLess(
+                workflow.index("- name: Prepare runtime sparse identity pins"),
+                workflow.index("- name: Build rustdesk"),
+            )
+            self.assertIn("RUSTDESK_IDENTITY_ROOT_SHA256=$rootHash", workflow)
+            self.assertIn("RUSTDESK_IDENTITY_SIGNER_SHA256=$signerHash", workflow)
+            self.assertIn("SHA256]::HashData($root[0].RawData)", workflow)
             step = workflow.split("- name: Build and sign sparse MSIX identity packages", 1)[1]
             self.assertIn("continue-on-error: true", step.split("- name:", 1)[0])
             self.assertIn("timeout-minutes: 5", step.split("- name:", 1)[0])
@@ -251,7 +274,7 @@ class SparseMsixManifestTests(unittest.TestCase):
             self.assertIn("X509ChainTrustMode]::CustomRootTrust", step)
             self.assertIn("Export-Certificate -Cert $rootCert -FilePath $cerPath", step)
             self.assertIn("Export-Certificate -Cert $cert -FilePath $signerCerPath", step)
-            self.assertIn('Copy-Item res\\msix\\manage_sparse_identity.ps1 "$($build.Dir)\\manage_sparse_identity.ps1"', step)
+            self.assertNotIn("manage_sparse_identity.ps1", step)
             self.assertIn("Join-Path $env:RUNNER_TEMP", step)
             self.assertIn('$cert.Subject -ne "CN=RustDesk"', step)
             self.assertIn("$signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint", step)
