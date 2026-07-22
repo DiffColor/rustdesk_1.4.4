@@ -94,6 +94,8 @@ try {
     foreach ($file in $files) {
         $existingSignature = Get-AuthenticodeSignature $file.FullName
         $expectedFileSignerThumbprint = $cert.Thumbprint
+        $trustedThirdPartySignature = $false
+        $pinnedPrivateSignature = $false
         if ($existingSignature.SignerCertificate -and -not $ReplaceExisting) {
             $trustedThirdPartySignature = $existingSignature.Status -eq "Valid" -and $existingSignature.TimeStamperCertificate
             $pinnedPrivateSignature = $existingSignature.SignerCertificate.Thumbprint -eq $cert.Thumbprint -and
@@ -116,7 +118,10 @@ try {
                 throw "Signing failed: $($file.FullName)"
             }
         }
-        $verifyOutput = (& $signtool verify /pa /all /v $file.FullName 2>&1 | Out-String)
+        $verifyArguments = @("verify", "/pa")
+        if (-not $trustedThirdPartySignature) { $verifyArguments += "/all" }
+        $verifyArguments += @("/v", $file.FullName)
+        $verifyOutput = (& $signtool @verifyArguments 2>&1 | Out-String)
         $verifyExitCode = $LASTEXITCODE
         Write-Host $verifyOutput
         $signature = Get-AuthenticodeSignature $file.FullName

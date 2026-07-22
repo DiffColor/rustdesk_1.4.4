@@ -270,9 +270,12 @@ class SparseMsixManifestTests(unittest.TestCase):
         self.assertIn("$KeepTrust", signing)
         self.assertIn("Preserved existing signature", signing)
         self.assertIn('$trustedThirdPartySignature = $existingSignature.Status -eq "Valid"', signing)
+        self.assertIn("$trustedThirdPartySignature = $false", signing)
         self.assertIn("$pinnedPrivateSignature", signing)
         self.assertIn("$expectedFileSignerThumbprint = $existingSignature.SignerCertificate.Thumbprint", signing)
         self.assertIn("$signature.SignerCertificate.Thumbprint -ne $expectedFileSignerThumbprint", signing)
+        self.assertIn('if (-not $trustedThirdPartySignature) { $verifyArguments += "/all" }', signing)
+        self.assertIn("& $signtool @verifyArguments", signing)
         self.assertIn("Existing signature is invalid", signing)
 
         for workflow_name in ("flutter-build.yml", "flutter-build-windows.yml"):
