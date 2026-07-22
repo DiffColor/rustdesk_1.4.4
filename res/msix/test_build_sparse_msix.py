@@ -245,6 +245,8 @@ class SparseMsixManifestTests(unittest.TestCase):
             self.assertIn("Get-PfxData -FilePath $pfxPath -Password $securePassword", step)
             self.assertIn("Import-Certificate -FilePath $signerCerPath", step)
             self.assertIn("Sparse MSIX PFX must contain a self-signed CA root certificate", step)
+            self.assertIn("Sparse MSIX signer does not chain to the bundled root certificate", step)
+            self.assertIn("X509ChainTrustMode]::CustomRootTrust", step)
             self.assertIn("Export-Certificate -Cert $rootCert -FilePath $cerPath", step)
             self.assertIn("Export-Certificate -Cert $cert -FilePath $signerCerPath", step)
             self.assertIn('Copy-Item res\\msix\\manage_sparse_identity.ps1 "$($build.Dir)\\manage_sparse_identity.ps1"', step)

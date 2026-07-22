@@ -352,6 +352,15 @@ jobs:
             } | Select-Object -First 1
             if ($cert.Subject -ne "CN=RustDesk") { throw "Sparse MSIX certificate publisher mismatch" }
             if (-not $rootCert) { throw "Sparse MSIX PFX must contain a self-signed CA root certificate" }
+            $chain = [System.Security.Cryptography.X509Certificates.X509Chain]::new()
+            try {
+              $chain.ChainPolicy.TrustMode = [System.Security.Cryptography.X509Certificates.X509ChainTrustMode]::CustomRootTrust
+              $chain.ChainPolicy.CustomTrustStore.Add($rootCert)
+              $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+              if (-not $chain.Build($cert)) { throw "Sparse MSIX signer does not chain to the bundled root certificate" }
+            } finally {
+              $chain.Dispose()
+            }
             Export-Certificate -Cert $cert -FilePath $signerCerPath | Out-Null
             Export-Certificate -Cert $rootCert -FilePath $cerPath | Out-Null
             if (-not (Test-Path "Cert:\CurrentUser\TrustedPeople\$($cert.Thumbprint)")) {
