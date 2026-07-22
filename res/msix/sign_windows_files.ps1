@@ -66,10 +66,10 @@ try {
     $rootCert = $rootCerts[0]
     $signerSha256 = $cert.GetCertHashString([System.Security.Cryptography.HashAlgorithmName]::SHA256)
     $rootSha256 = $rootCert.GetCertHashString([System.Security.Cryptography.HashAlgorithmName]::SHA256)
-    if (-not $env:RUSTDESK_IDENTITY_SIGNER_SHA256 -or $signerSha256 -ne $env:RUSTDESK_IDENTITY_SIGNER_SHA256) {
+    if ($env:RUSTDESK_IDENTITY_SIGNER_SHA256 -notmatch '^[0-9A-F]{64}$' -or $signerSha256 -ne $env:RUSTDESK_IDENTITY_SIGNER_SHA256) {
         throw "Windows signing certificate does not match the signed runtime signer pin"
     }
-    if (-not $env:RUSTDESK_IDENTITY_ROOT_SHA256 -or $rootSha256 -ne $env:RUSTDESK_IDENTITY_ROOT_SHA256) {
+    if ($env:RUSTDESK_IDENTITY_ROOT_SHA256 -notmatch '^[0-9A-F]{64}$' -or $rootSha256 -ne $env:RUSTDESK_IDENTITY_ROOT_SHA256) {
         throw "Windows signing root does not match the signed runtime root pin"
     }
     $chain = [System.Security.Cryptography.X509Certificates.X509Chain]::new()
@@ -77,7 +77,8 @@ try {
         $chain.ChainPolicy.TrustMode = [System.Security.Cryptography.X509Certificates.X509ChainTrustMode]::CustomRootTrust
         $chain.ChainPolicy.CustomTrustStore.Add($rootCert)
         $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
-        if (-not $chain.Build($cert) -or $chain.ChainElements[$chain.ChainElements.Count - 1].Certificate.Thumbprint -ne $rootCert.Thumbprint) {
+        $chainRootSha256 = if ($chain.Build($cert)) { $chain.ChainElements[$chain.ChainElements.Count - 1].Certificate.GetCertHashString([System.Security.Cryptography.HashAlgorithmName]::SHA256) } else { "" }
+        if ($chainRootSha256 -ne $rootSha256) {
             throw "Windows signing certificate does not chain to the pinned root certificate"
         }
     } finally {
@@ -93,22 +94,24 @@ try {
     foreach ($file in $files) {
         $existingSignature = Get-AuthenticodeSignature $file.FullName
         if ($existingSignature.SignerCertificate -and -not $ReplaceExisting) {
-            if ($existingSignature.Status -notin @("Valid", "NotTrusted")) {
+            if ($existingSignature.SignerCertificate.Thumbprint -ne $cert.Thumbprint -or
+                -not $existingSignature.TimeStamperCertificate -or
+                $existingSignature.Status -notin @("Valid", "NotTrusted", "UnknownError")) {
                 throw "Existing signature is invalid: $($file.FullName) [$($existingSignature.Status)]"
             }
             Write-Host "Preserved existing signature on $($file.Name): $($existingSignature.SignerCertificate.Subject)"
-            continue
-        }
-        $signed = $false
-        foreach ($timestampUrl in @("http://timestamp.sectigo.com", "http://timestamp.digicert.com")) {
-            & $signtool sign /fd SHA256 /tr $timestampUrl /td SHA256 /f $pfxPath /p $env:WINDOWS_IDENTITY_PFX_PASSWORD $file.FullName
-            if ($LASTEXITCODE -eq 0) {
-                $signed = $true
-                break
+        } else {
+            $signed = $false
+            foreach ($timestampUrl in @("http://timestamp.sectigo.com", "http://timestamp.digicert.com")) {
+                & $signtool sign /fd SHA256 /tr $timestampUrl /td SHA256 /f $pfxPath /p $env:WINDOWS_IDENTITY_PFX_PASSWORD $file.FullName
+                if ($LASTEXITCODE -eq 0) {
+                    $signed = $true
+                    break
+                }
             }
-        }
-        if (-not $signed) {
-            throw "Signing failed: $($file.FullName)"
+            if (-not $signed) {
+                throw "Signing failed: $($file.FullName)"
+            }
         }
         $verifyOutput = (& $signtool verify /pa /all /v $file.FullName 2>&1 | Out-String)
         $verifyExitCode = $LASTEXITCODE
@@ -120,45 +123,39 @@ try {
             $signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint) {
             throw "Signature verification failed for $($file.FullName) [$($signature.Status)]"
         }
-        if ([regex]::Matches($verifyOutput, '(?m)^\s*Signature Index:').Count -ne 1) {
+        if ([regex]::Matches($verifyOutput, '(?m)^\s*Signature Index:').Count -ne 1 -or
+            [regex]::Matches($verifyOutput, '(?m)^\s*Signature Index: 0 \(Primary Signature\)\s*$').Count -ne 1) {
             throw "Unexpected Authenticode signature count: $($file.FullName)"
         }
-        if ($verifyOutput -notmatch '(?m)^\s*The signature is timestamped:' -or $verifyOutput -notmatch '(?m)^\s*Timestamp Verified by:') {
+        if (-not $signature.TimeStamperCertificate -or
+            [regex]::Matches($verifyOutput, '(?m)^\s*The signature is timestamped:').Count -ne 1 -or
+            [regex]::Matches($verifyOutput, '(?m)^\s*Timestamp Verified by:\s*$').Count -ne 1) {
             throw "RFC3161 timestamp verification failed: $($file.FullName)"
         }
         $verifyLines = @(($verifyOutput -split '\r?\n') | Where-Object { $_ -notmatch '^\s*$' })
-        $rootErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*SignTool Error: A certificate chain processed, but terminated in a root\s*$') { $i } })
-        $providerErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*certificate which is not trusted by the trust provider\.\s*$') { $i } })
         $chainBuildErrorIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*SignTool Error: WinVerifyTrust returned error: 0x800B010A\s*$') { $i } })
         $chainBuildMessageIndices = @(for ($i = 0; $i -lt $verifyLines.Count; $i++) { if ($verifyLines[$i] -match '^\s*A certificate chain could not be built to a trusted root authority\.\s*$') { $i } })
         $signToolErrors = @($verifyLines | Where-Object { $_ -match '^\s*SignTool Error:' })
+        $signToolWarnings = @($verifyLines | Where-Object { $_ -match '^\s*SignTool Warning:' })
         $verifiedSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of signatures successfully Verified:' })
         $warningSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of warnings:' })
         $errorSummaries = @($verifyLines | Where-Object { $_ -match '^\s*Number of errors:' })
-        $interposedLines = if ($rootErrorIndices.Count -eq 1 -and $providerErrorIndices.Count -eq 1 -and $providerErrorIndices[0] -gt ($rootErrorIndices[0] + 1)) { @($verifyLines[($rootErrorIndices[0] + 1)..($providerErrorIndices[0] - 1)]) } else { @() }
-        $unexpectedInterposedLines = @($interposedLines | Where-Object { $_ -notmatch '^\s*(?:Verifying: .+|Signature Index: 0 \(Primary Signature\)|Hash of file \(sha256\): [0-9A-F]{64}|Signing Certificate Chain:|Issued to: .+|Issued by: .+|Expires:\s+.+|SHA1 hash: [0-9A-F]{40}|The signature is timestamped: .+|Timestamp Verified by:|Number of signatures successfully Verified: 0|Number of warnings: 0|Number of errors: 1)\s*$' })
-        $expectedLegacyRootTrustFailure = $verifyExitCode -ne 0 -and
-            $signToolErrors.Count -eq 1 -and $rootErrorIndices.Count -eq 1 -and
-            $providerErrorIndices.Count -eq 1 -and $providerErrorIndices[0] -gt $rootErrorIndices[0] -and $unexpectedInterposedLines.Count -eq 0 -and
-            $verifiedSummaries.Count -eq 1 -and $verifiedSummaries[0] -match '^\s*Number of signatures successfully Verified: 0\s*$' -and
+        $validSignature = $verifyExitCode -eq 0 -and $signature.Status -eq "Valid" -and
+            $signToolErrors.Count -eq 0 -and $signToolWarnings.Count -eq 0 -and
+            $verifiedSummaries.Count -eq 1 -and $verifiedSummaries[0] -match '^\s*Number of signatures successfully Verified: 1\s*$' -and
             $warningSummaries.Count -eq 1 -and $warningSummaries[0] -match '^\s*Number of warnings: 0\s*$' -and
-            $errorSummaries.Count -eq 1 -and $errorSummaries[0] -match '^\s*Number of errors: 1\s*$'
+            $errorSummaries.Count -eq 1 -and $errorSummaries[0] -match '^\s*Number of errors: 0\s*$'
         $expectedChainBuildTrustFailure = $verifyExitCode -ne 0 -and
+            $signature.Status -eq "UnknownError" -and $signToolWarnings.Count -eq 0 -and
             $signToolErrors.Count -eq 1 -and $chainBuildErrorIndices.Count -eq 1 -and
             $chainBuildMessageIndices.Count -eq 1 -and $chainBuildMessageIndices[0] -eq ($chainBuildErrorIndices[0] + 1) -and
             $verifiedSummaries.Count -eq 1 -and $verifiedSummaries[0] -match '^\s*Number of signatures successfully Verified: 0\s*$' -and
             $warningSummaries.Count -eq 1 -and $warningSummaries[0] -match '^\s*Number of warnings: 0\s*$' -and
             $errorSummaries.Count -eq 1 -and $errorSummaries[0] -match '^\s*Number of errors: 1\s*$'
-        $expectedRootTrustFailure = $expectedLegacyRootTrustFailure -or $expectedChainBuildTrustFailure
-        if ($verifyExitCode -ne 0 -and -not $expectedRootTrustFailure) {
+        if (-not $validSignature -and -not $expectedChainBuildTrustFailure) {
             throw "Unexpected SignTool verification failure: $($file.FullName)"
         }
-        $statusAllowed = $signature.Status -in @("Valid", "NotTrusted") -or
-            ($signature.Status -eq "UnknownError" -and $expectedRootTrustFailure)
-        if (-not $statusAllowed) {
-            throw "Signature status was not allowed for $($file.FullName) [$($signature.Status)]"
-        }
-        if ($expectedRootTrustFailure) { $global:LASTEXITCODE = 0 }
+        if ($expectedChainBuildTrustFailure) { $global:LASTEXITCODE = 0 }
         Write-Host "Signed $($file.Name) with $($cert.Subject) [$($cert.Thumbprint)]"
     }
     $succeeded = $true
