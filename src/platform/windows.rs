@@ -1348,8 +1348,6 @@ fn encoded_sparse_identity_command(
 ) -> ResultType<String> {
     use flate2::{write::GzEncoder, Compression};
     use hbb_common::base64::{engine::general_purpose::STANDARD, Engine as _};
-    use std::io::Write;
-
     let mut compressor = GzEncoder::new(Vec::new(), Compression::best());
     compressor.write_all(SPARSE_IDENTITY_SCRIPT.as_bytes())?;
     let script = STANDARD.encode(compressor.finish()?);
@@ -2980,7 +2978,7 @@ taskkill /F /IM {app_name}.exe{filter}
 {reg_cmd}
 {copy_exe}
 {identity_files}
-start "" /b "{exe}" --register-sparse-identity
+start \"\" /b \"{exe}\" --register-sparse-identity
 {restore_service_cmd}
 {uninstall_printer_cmd}
 {install_printer_cmd}

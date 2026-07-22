@@ -204,6 +204,7 @@ class SparseMsixManifestTests(unittest.TestCase):
         self.assertIn('Action="TerminateProcesses" Before="TerminateBrokers"', msi)
         self.assertIn('Action="TerminateBrokers" Before="UnregisterSparseIdentity"', msi)
         self.assertIn('Action="UnregisterSparseIdentity" Before="RemoveInstallFolder"', msi)
+
         self.assertNotIn('"rustdesk-web-identity.msix"', msi_preprocess)
         self.assertNotIn('"rustdesk-web-identity.cer"', msi_preprocess)
         self.assertIn('$StateDirectory', powershell)
@@ -241,7 +242,7 @@ class SparseMsixManifestTests(unittest.TestCase):
             powershell.index("Add-TrustRootCertificate -Certificate $certificate"),
         )
         self.assertIn("copy_sparse_identity_commands(src_dir, &path)", windows)
-        self.assertIn('start "" /b "{exe}" --register-sparse-identity', windows)
+        self.assertIn('start \\"\\" /b \\"{exe}\\" --register-sparse-identity', windows)
         self.assertIn('@(".dll", ".exe", ".msi")', signing)
         self.assertNotIn('".sys"', signing)
         self.assertIn("/tr $timestampUrl /td SHA256", signing)
