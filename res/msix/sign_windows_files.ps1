@@ -71,7 +71,7 @@ try {
             continue
         }
         $signed = $false
-        foreach ($timestampUrl in @("http://timestamp.digicert.com", "http://timestamp.sectigo.com")) {
+        foreach ($timestampUrl in @("http://timestamp.sectigo.com", "http://timestamp.digicert.com")) {
             & $signtool sign /fd SHA256 /tr $timestampUrl /td SHA256 /f $pfxPath /p $env:WINDOWS_IDENTITY_PFX_PASSWORD $file.FullName
             if ($LASTEXITCODE -eq 0) {
                 $signed = $true

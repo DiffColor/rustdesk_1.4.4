@@ -246,6 +246,7 @@ class SparseMsixManifestTests(unittest.TestCase):
         self.assertIn('@(".dll", ".exe", ".msi")', signing)
         self.assertNotIn('".sys"', signing)
         self.assertIn("/tr $timestampUrl /td SHA256", signing)
+        self.assertIn('@("http://timestamp.sectigo.com", "http://timestamp.digicert.com")', signing)
         self.assertIn('$signature.Status -eq "UnknownError" -and $expectedRootTrustFailure', signing)
         self.assertIn("Timestamp Verified by:", signing)
         self.assertIn("Windows signing temporary-file cleanup was incomplete", signing)

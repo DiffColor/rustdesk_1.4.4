@@ -402,7 +402,7 @@ jobs:
               Copy-Item res\icon.png (Join-Path $stageRoot "Assets\storelogo.png"); Copy-Item res\icon.png (Join-Path $stageRoot "Assets\Square150x150Logo.png"); Copy-Item res\icon.png (Join-Path $stageRoot "Assets\Square44x44Logo.png")
               & $makeappx pack /o /d $stageRoot /nv /p $build.Output; if ($LASTEXITCODE) { throw "MakeAppx failed" }
               $signed = $false
-              foreach ($timestampUrl in @("http://timestamp.digicert.com", "http://timestamp.sectigo.com")) {
+              foreach ($timestampUrl in @("http://timestamp.sectigo.com", "http://timestamp.digicert.com")) {
                 & $signtool sign /fd SHA256 /tr $timestampUrl /td SHA256 /f $pfxPath /p $env:IDENTITY_PFX_PASSWORD $build.Output
                 if ($LASTEXITCODE -eq 0) { $signed = $true; break }
               }
