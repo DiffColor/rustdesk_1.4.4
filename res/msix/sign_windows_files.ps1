@@ -93,12 +93,15 @@ try {
     }
     foreach ($file in $files) {
         $existingSignature = Get-AuthenticodeSignature $file.FullName
+        $expectedFileSignerThumbprint = $cert.Thumbprint
         if ($existingSignature.SignerCertificate -and -not $ReplaceExisting) {
-            if ($existingSignature.SignerCertificate.Thumbprint -ne $cert.Thumbprint -or
-                -not $existingSignature.TimeStamperCertificate -or
-                $existingSignature.Status -notin @("Valid", "NotTrusted", "UnknownError")) {
+            $trustedThirdPartySignature = $existingSignature.Status -eq "Valid" -and $existingSignature.TimeStamperCertificate
+            $pinnedPrivateSignature = $existingSignature.SignerCertificate.Thumbprint -eq $cert.Thumbprint -and
+                $existingSignature.Status -in @("NotTrusted", "UnknownError") -and $existingSignature.TimeStamperCertificate
+            if (-not $trustedThirdPartySignature -and -not $pinnedPrivateSignature) {
                 throw "Existing signature is invalid: $($file.FullName) [$($existingSignature.Status)]"
             }
+            $expectedFileSignerThumbprint = $existingSignature.SignerCertificate.Thumbprint
             Write-Host "Preserved existing signature on $($file.Name): $($existingSignature.SignerCertificate.Subject)"
         } else {
             $signed = $false
@@ -120,7 +123,7 @@ try {
         $actualThumbprint = if ($signature.SignerCertificate) { $signature.SignerCertificate.Thumbprint } else { "none" }
         Write-Host "Authenticode status=$($signature.Status) signer=$actualThumbprint"
         if (-not $signature.SignerCertificate -or
-            $signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint) {
+            $signature.SignerCertificate.Thumbprint -ne $expectedFileSignerThumbprint) {
             throw "Signature verification failed for $($file.FullName) [$($signature.Status)]"
         }
         if ([regex]::Matches($verifyOutput, '(?m)^\s*Signature Index:').Count -ne 1 -or
