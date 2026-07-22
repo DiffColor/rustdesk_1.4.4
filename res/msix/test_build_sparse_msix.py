@@ -206,6 +206,8 @@ class SparseMsixManifestTests(unittest.TestCase):
         self.assertIn('"$Action|$RequestId"', powershell)
         self.assertIn("$mutex.WaitOne()", powershell)
         self.assertIn("StoreName]::Root", powershell)
+        self.assertIn("StoreLocation]::LocalMachine", powershell)
+        self.assertNotIn("StoreLocation]::CurrentUser", powershell)
         self.assertIn("CertificateAuthority", powershell)
         self.assertIn('"--register-sparse-identity"', core)
         self.assertIn("reconcile_sparse_identity_for_current_user", core)

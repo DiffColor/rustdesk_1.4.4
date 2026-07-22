@@ -66,7 +66,7 @@ function Add-TrustRootCertificate {
 
     $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
         [System.Security.Cryptography.X509Certificates.StoreName]::Root,
-        [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
+        [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine
     )
     try {
         $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
@@ -90,7 +90,7 @@ function Test-TrustRootCertificate {
 
     $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
         [System.Security.Cryptography.X509Certificates.StoreName]::Root,
-        [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
+        [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine
     )
     try {
         $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
@@ -109,7 +109,7 @@ function Remove-TrustRootCertificate {
 
     $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
         [System.Security.Cryptography.X509Certificates.StoreName]::Root,
-        [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
+        [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine
     )
     try {
         $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
