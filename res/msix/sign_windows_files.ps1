@@ -119,7 +119,31 @@ try {
             }
         }
         $verifyArguments = @("verify", "/pa")
-        if (-not $trustedThirdPartySignature) { $verifyArguments += "/all" }
+        $expectedSignatureIndex = 0
+        if ($trustedThirdPartySignature) {
+            $signatureDiscoveryOutput = (& $signtool verify /pa /all /v $file.FullName 2>&1 | Out-String)
+            $signatureBlocks = [regex]::Matches(
+                $signatureDiscoveryOutput,
+                '(?ms)^\s*Signature Index:\s*(?<Index>\d+)(?:\s+\(Primary Signature\))?\s*$.*?(?=^\s*Signature Index:|\z)'
+            )
+            $matchingSignatureIndices = @(foreach ($block in $signatureBlocks) {
+                $signingChain = [regex]::Match(
+                    $block.Value,
+                    '(?ms)^\s*Signing Certificate Chain:\s*$.*?(?=^\s*The signature is timestamped:|^\s*File is not timestamped\.)'
+                )
+                $chainHashes = @([regex]::Matches($signingChain.Value, '(?m)^\s*SHA1 hash:\s*(?<Hash>[0-9A-F]{40})\s*$'))
+                if ($chainHashes.Count -gt 0 -and $chainHashes[$chainHashes.Count - 1].Groups['Hash'].Value -eq $expectedFileSignerThumbprint) {
+                    [int]$block.Groups['Index'].Value
+                }
+            })
+            if ($matchingSignatureIndices.Count -ne 1) {
+                throw "Trusted vendor signer must identify exactly one Authenticode signature: $($file.FullName)"
+            }
+            $expectedSignatureIndex = $matchingSignatureIndices[0]
+            $verifyArguments += @("/ds", [string]$expectedSignatureIndex)
+        } else {
+            $verifyArguments += "/all"
+        }
         $verifyArguments += @("/v", $file.FullName)
         $verifyOutput = (& $signtool @verifyArguments 2>&1 | Out-String)
         $verifyExitCode = $LASTEXITCODE
@@ -131,8 +155,13 @@ try {
             $signature.SignerCertificate.Thumbprint -ne $expectedFileSignerThumbprint) {
             throw "Signature verification failed for $($file.FullName) [$($signature.Status)]"
         }
+        $expectedSignatureHeader = if ($expectedSignatureIndex -eq 0) {
+            '^\s*Signature Index: 0 \(Primary Signature\)\s*$'
+        } else {
+            "^\s*Signature Index: $expectedSignatureIndex\s*$"
+        }
         if ([regex]::Matches($verifyOutput, '(?m)^\s*Signature Index:').Count -ne 1 -or
-            [regex]::Matches($verifyOutput, '(?m)^\s*Signature Index: 0 \(Primary Signature\)\s*$').Count -ne 1) {
+            [regex]::Matches($verifyOutput, "(?m)$expectedSignatureHeader").Count -ne 1) {
             throw "Unexpected Authenticode signature count: $($file.FullName)"
         }
         if (-not $signature.TimeStamperCertificate -or
