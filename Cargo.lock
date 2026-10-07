@@ -6724,6 +6724,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustdesk-uri-handler"
+version = "1.4.4"
+dependencies = [
+ "winapi 0.3.9",
+ "winres",
+]
+
+[[package]]
 name = "rustfft"
 version = "6.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
