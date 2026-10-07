@@ -13,6 +13,7 @@ SCRIPT_PATH = Path(__file__).with_name("build_sparse_msix.py")
 JOB_SCRIPT_PATH = Path(__file__).parents[1] / "job.py"
 PORTABLE_SCRIPT_PATH = Path(__file__).parents[2] / "libs/portable/generate.py"
 RUNNER_MANIFEST_PATH = Path(__file__).parents[2] / "flutter/windows/runner/runner.exe.manifest"
+HANDLER_MANIFEST_PATH = Path(__file__).parents[2] / "libs/uri_handler/manifest.xml"
 REPO_ROOT = Path(__file__).parents[2]
 
 
@@ -156,15 +157,23 @@ class SparseMsixManifestTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     module.render_manifest(version="1.4.4", web_host=host)
 
-    def test_runner_manifest_identity_matches_sparse_package(self):
-        module = load_module()
+    def test_runner_manifest_has_no_package_identity(self):
+        # RustDesk.exe must stay identity-free: an executable that declares a
+        # package identity cannot be started by the SCM as a LocalSystem service.
         root = ET.parse(RUNNER_MANIFEST_PATH).getroot()
+        self.assertIsNone(root.find("{urn:schemas-microsoft-com:msix.v1}msix"))
+        self.assertIsNone(root.find("{urn:schemas-microsoft-com:asm.v1}assemblyIdentity"))
+
+    def test_handler_manifest_identity_matches_sparse_package(self):
+        module = load_module()
+        root = ET.parse(HANDLER_MANIFEST_PATH).getroot()
         msix = root.find("{urn:schemas-microsoft-com:msix.v1}msix")
 
         self.assertIsNotNone(msix)
         self.assertEqual(msix.attrib["publisher"], module.PUBLISHER)
         self.assertEqual(msix.attrib["packageName"], module.PACKAGE_NAME)
         self.assertEqual(msix.attrib["applicationId"], module.APPLICATION_ID)
+        self.assertEqual(module.EXECUTABLE_NAME, "rustdesk-uri-handler.exe")
 
     def test_sparse_identity_is_non_blocking_for_rustdesk(self):
         powershell = (Path(__file__).with_name("manage_sparse_identity.ps1")).read_text()

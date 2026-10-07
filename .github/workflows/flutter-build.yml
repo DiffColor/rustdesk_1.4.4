@@ -343,6 +343,16 @@ jobs:
           pip3 install requests argparse
           BASE_URL=${{ secrets.SIGN_BASE_URL }} SECRET_KEY=${{ secrets.SIGN_SECRET_KEY }} python3 res/job.py sign_files ./rustdesk-host/
 
+      - name: Build sparse identity URI handler
+        if: env.UPLOAD_ARTIFACT == 'true'
+        run: |
+          # The sparse MSIX identity lives in this small launcher, not in RustDesk.exe,
+          # so RustDesk.exe can still be started by the SCM as a LocalSystem service.
+          cargo build --release -p rustdesk-uri-handler
+          foreach ($dir in @("rustdesk", "rustdesk-host")) {
+            Copy-Item -Force target\release\rustdesk-uri-handler.exe "$dir\rustdesk-uri-handler.exe"
+          }
+
       - name: Build and sign sparse MSIX identity packages
         if: env.UPLOAD_ARTIFACT == 'true'
         timeout-minutes: 5
@@ -363,8 +373,8 @@ jobs:
           $stageRoot = Join-Path $env:RUNNER_TEMP "rustdesk-web-identity-stage-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           $cert = $null; $trustedByStep = $false; $succeeded = $false
           $builds = @(
-            @{Dir="rustdesk";Exe="rustdesk.exe";Output=(Join-Path $outputRoot "rustdesk.msix")},
-            @{Dir="rustdesk-host";Exe="rustdesk.exe";Output=(Join-Path $outputRoot "rustdesk-host.msix")}
+            @{Dir="rustdesk";Exe="rustdesk-uri-handler.exe";Output=(Join-Path $outputRoot "rustdesk.msix")},
+            @{Dir="rustdesk-host";Exe="rustdesk-uri-handler.exe";Output=(Join-Path $outputRoot "rustdesk-host.msix")}
           )
           try {
             Remove-Item $outputRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -479,7 +489,7 @@ jobs:
           $stageRoot = Join-Path $env:RUNNER_TEMP "rustdesk-web-identity-stage-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           $thumbprint = if (Test-Path $certMarker) { (Get-Content $certMarker -Raw).Trim() } else { $null }
           if ($thumbprint -and (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item "Cert:\CurrentUser\TrustedPeople\$thumbprint" -Force -ErrorAction SilentlyContinue }
-          if (-not (Test-Path identity-build-complete)) { Remove-Item rustdesk\rustdesk-web-identity.*, rustdesk-host\rustdesk-web-identity.* -Force -ErrorAction SilentlyContinue }
+          if (-not (Test-Path identity-build-complete)) { Remove-Item rustdesk\rustdesk-web-identity.*, rustdesk-host\rustdesk-web-identity.*, rustdesk\rustdesk-uri-handler.exe, rustdesk-host\rustdesk-uri-handler.exe -Force -ErrorAction SilentlyContinue }
           Remove-Item $stageRoot, $outputRoot -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item $pfxPath, $cerPath, $signerCerPath -Force -ErrorAction SilentlyContinue
           if (-not $thumbprint -or -not (Test-Path "Cert:\CurrentUser\TrustedPeople\$thumbprint")) { Remove-Item $certMarker -Force -ErrorAction SilentlyContinue }
@@ -501,7 +511,8 @@ jobs:
           sed -i '/dpiAware/d' res/manifest.xml
           pushd ./libs/portable
           pip3 install -r requirements.txt
-          args=(); [[ -f ../../identity-build-complete ]] || args+=(--exclude rustdesk-web-identity.msix --exclude rustdesk-web-identity.cer)
+          # Portable builds never ship the sparse identity (like 1.4.4-11): no handler, no package, no certificate.
+          args=(--exclude rustdesk-web-identity.msix --exclude rustdesk-web-identity.cer --exclude rustdesk-uri-handler.exe)
           python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe "${args[@]}"
           popd
           mkdir -p ./SignOutput
@@ -514,7 +525,8 @@ jobs:
           sed -i '/dpiAware/d' res/manifest.xml
           pushd ./libs/portable
           pip3 install -r requirements.txt
-          args=(); [[ -f ../../identity-build-complete ]] || args+=(--exclude rustdesk-web-identity.msix --exclude rustdesk-web-identity.cer)
+          # Portable builds never ship the sparse identity (like 1.4.4-11): no handler, no package, no certificate.
+          args=(--exclude rustdesk-web-identity.msix --exclude rustdesk-web-identity.cer --exclude rustdesk-uri-handler.exe)
           python3 ./generate.py -f ../../rustdesk-host/ -o . -e ../../rustdesk-host/rustdesk_host_turtlelab.exe "${args[@]}"
           popd
           mkdir -p ./SignOutput

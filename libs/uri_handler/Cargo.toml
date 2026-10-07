@@ -1,0 +1,22 @@
+[package]
+name = "rustdesk-uri-handler"
+version = "1.4.4"
+edition = "2021"
+description = "RustDesk web identity URI handler"
+build = "build.rs"
+
+# Small launcher that carries the sparse MSIX package identity for the
+# `windows.appUriHandler` extension. RustDesk.exe itself stays identity-free
+# so it can run as a classic LocalSystem service.
+
+[dependencies]
+
+[target.'cfg(target_os="windows")'.build-dependencies]
+winres = "0.1"
+winapi = { version = "0.3", features = [ "winnt", "pdh", "synchapi" ] }
+
+[package.metadata.winres]
+LegalCopyright = "Copyright © 2025 Purslane Ltd. All rights reserved."
+ProductName = "RustDesk"
+OriginalFilename = "rustdesk-uri-handler.exe"
+FileDescription = "RustDesk URI Handler"

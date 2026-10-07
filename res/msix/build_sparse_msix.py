@@ -9,7 +9,7 @@ from pathlib import Path
 PACKAGE_NAME = "RustDesk.WebIdentity"
 PUBLISHER = "CN=RustDesk"
 APPLICATION_ID = "RustDesk"
-EXECUTABLE_NAME = "RustDesk.exe"
+EXECUTABLE_NAME = "rustdesk-uri-handler.exe"
 DISPLAY_NAME = "RustDesk"
 PUBLISHER_DISPLAY_NAME = "RustDesk"
 MIN_WINDOWS_VERSION = "10.0.19041.0"
